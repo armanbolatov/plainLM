@@ -16,7 +16,6 @@ env/
 
 # Ignore data files
 *.csv
-*.json
 
 # Ignore any other temporary or sensitive files
 *.tmp
@@ -30,3 +29,14 @@ Thumbs.db
 # Ignore Weights & Biases (wandb) files
 wandb/
 *.wandb
+logs/
+
+# Ignore checkpoints (large files)
+*.pth
+*.ckpt
+
+# Ignore build artifacts
+build/
+
+# Keep metrics.json files in experiments/
+# (they're committed for the sweep results)

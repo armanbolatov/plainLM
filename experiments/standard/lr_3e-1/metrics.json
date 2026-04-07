@@ -1,0 +1,1 @@
+{"step": [5500], "lr": [0.3], "train/loss": [1000.0], "train/loss_avg": [1000.0], "optim/lr_eff": [0.3], "optim/dampening": [1.0], "optim/dual_norm_sq": [10000000000.0], "optim/grad_norm": [1000.0], "optim/update_norm": [1000.0], "optim/dn_layer_std": [0.0], "optim/dn_layer_max": [0.0]}

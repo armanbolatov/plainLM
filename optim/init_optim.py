@@ -4,14 +4,47 @@ import torch
 from .lr_schedule import WarmupCosine, WSD, WarmupConstant, LinearCooldown
 
 
-def intialize_optimizer(param_groups, cfg):
+def _build_scion_param_groups(model, cfg):
+  """Build per-layer param groups for Scion, matching ScionVar conventions."""
+  ns_steps = getattr(cfg, 'scion_norm_steps', 5)
+  embed_scale = getattr(cfg, 'embed_tokens_scale', 64.0)
+  matrix_scale = getattr(cfg, 'matrix_scale', 4.0)
+  lm_head_scale = getattr(cfg, 'lm_head_scale', 2048.0)
+  oned_scale = getattr(cfg, 'oned_params_scale', 1.0)
+  unconstrained = getattr(cfg, 'scion_unconstrained', False)
+
+  groups = []
+  for name, p in model.named_parameters():
+    if not p.requires_grad:
+      continue
+
+    if 'embed_tokens' in name or 'wte' in name:
+      group = dict(params=[p], norm='Sign', norm_kwargs={'normalized': False},
+                   scale=embed_scale, unconstrained=unconstrained)
+    elif 'lm_head' in name:
+      group = dict(params=[p], norm='Sign', norm_kwargs={},
+                   scale=lm_head_scale, unconstrained=unconstrained)
+    elif p.ndim >= 2:
+      group = dict(params=[p], norm='Spectral',
+                   norm_kwargs={'normalized': False, 'steps': ns_steps},
+                   scale=matrix_scale, unconstrained=unconstrained)
+    else:
+      group = dict(params=[p], norm='Sign', norm_kwargs={'normalized': False},
+                   scale=oned_scale, unconstrained=unconstrained)
+
+    groups.append(group)
+
+  return groups
+
+
+def intialize_optimizer(param_groups, cfg, model=None):
   """
   Intialize an optimizer.
   NOTE: we pass weight_decay to optim, but it gets overwritten by the weight_decay in param_groups!
   """
 
   if cfg.optim == 'adamw':
-    optimizer = torch.optim.AdamW(
+    base_optim = torch.optim.AdamW(
       param_groups,
       lr=cfg.lr,
       betas=[cfg.beta1, cfg.beta2],
@@ -19,6 +52,9 @@ def intialize_optimizer(param_groups, cfg):
       fused=cfg.fused_optim,
       eps=getattr(cfg, 'eps', 1e-8),
     )
+    # Wrap with diagnostics
+    from .adamw_diag import wrap_with_diagnostics
+    optimizer = wrap_with_diagnostics(base_optim)
 
   elif cfg.optim == 'nadamw':
     optimizer = torch.optim.NAdam(
@@ -48,6 +84,71 @@ def intialize_optimizer(param_groups, cfg):
       lr=cfg.lr,
       momentum=cfg.beta1,
       dampening=cfg.dampening,
+      weight_decay=cfg.weight_decay,
+    )
+
+  elif cfg.optim == 'scion':
+    from .scion_adaptive import Scion
+
+    # Use per-layer param groups if model is provided and per-layer scales are set
+    if model is not None and hasattr(cfg, 'matrix_scale'):
+      scion_groups = _build_scion_param_groups(model, cfg)
+    else:
+      # Fallback: single norm for all params
+      scion_norm = getattr(cfg, 'scion_norm', 'Spectral')
+      norm_kwargs = {}
+      if scion_norm == 'Spectral':
+        norm_kwargs['steps'] = getattr(cfg, 'scion_norm_steps', 5)
+      scion_groups = param_groups
+      for g in scion_groups:
+        g['norm'] = scion_norm
+        g['norm_kwargs'] = norm_kwargs
+        g['scale'] = getattr(cfg, 'scion_scale', 1.0)
+        g['unconstrained'] = getattr(cfg, 'scion_unconstrained', False)
+
+    optimizer = Scion(
+      scion_groups,
+      lr=cfg.lr,
+      momentum=getattr(cfg, 'scion_momentum', cfg.beta1),
+      weight_decay=cfg.weight_decay,
+      adaptive=getattr(cfg, 'scion_adaptive', False),
+    )
+
+  elif cfg.optim == 'muonmax_momo':
+    from .muonmax_momo import MuonMaxMomo
+
+    excluded = ('embed_tokens', 'lm_head', 'wte', 'wpe')
+    muon_params = []
+    adam_params = []
+    for name, p in model.named_parameters():
+      if not p.requires_grad:
+        continue
+      if p.ndim >= 2 and not any(k in name.lower() for k in excluded):
+        muon_params.append(p)
+      else:
+        adam_params.append(p)
+
+    optimizer = MuonMaxMomo(
+      muon_params, adam_params,
+      lr=cfg.lr,
+      muon_lr_scale=getattr(cfg, 'muon_lr_scale', 10.0),
+      wd=cfg.weight_decay,
+      momentum=getattr(cfg, 'muon_momentum', 0.95),
+      ns_steps=getattr(cfg, 'scion_norm_steps', 5),
+      betas=[cfg.beta1, cfg.beta2],
+      eps=getattr(cfg, 'eps', 1e-8),
+      truncate_loss=getattr(cfg, 'truncate_loss', 0.0),
+      stale_nuc=getattr(cfg, 'stale_nuc', True),
+    )
+
+  elif cfg.optim == 'ngnmdv1':
+    from .NGNMDv1 import NGN_MDv1
+
+    optimizer = NGN_MDv1(
+      param_groups,
+      lr=cfg.lr,
+      betas=[cfg.beta1, cfg.beta2],
+      eps=getattr(cfg, 'eps', 1e-8),
       weight_decay=cfg.weight_decay,
     )
 

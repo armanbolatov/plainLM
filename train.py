@@ -81,7 +81,7 @@ def main(_):
 
     # Log
     if master_process and step % cfg.log_every_steps == 0 and is_step:
-      utils.log(cfg, metrics, micro_step, train_loss, train_loss_array, valid_loss, engine.optimizer, world_size)
+      utils.log(cfg, metrics, micro_step, train_loss, train_loss_array, valid_loss, engine.optimizer, world_size, engine.get_optim_diagnostics())
       train_loss_array = []
 
     # Checkpoint

@@ -54,6 +54,13 @@ class TorchEngine(torch.nn.Module):
 
     self.device = device
 
+    # Whether optimizer needs loss value (e.g. Scion adaptive, NGN-MDv1, MaxMuon-Momo)
+    self.pass_loss_to_optim = (
+      getattr(cfg, 'scion_adaptive', False) or
+      cfg.optim in ('ngnmdv1', 'muonmax_momo')
+    )
+    self._accumulated_loss = 0.0
+
     # Load model state dict
     if cfg.resume:
       model.load_state_dict(ckpt['state_dict'])
@@ -82,7 +89,7 @@ class TorchEngine(torch.nn.Module):
 
     # Optimizer
     param_groups = get_param_groups(model, cfg.weight_decay)
-    self.optimizer = intialize_optimizer(param_groups, cfg)
+    self.optimizer = intialize_optimizer(param_groups, cfg, model=model)
     self.scheduler = initialize_scheduler(self.optimizer, cfg)
 
     if cfg.resume:
@@ -116,6 +123,10 @@ class TorchEngine(torch.nn.Module):
     if torch.isnan(loss_val):
       raise ValueError('Train loss is nan')
 
+    # accumulate loss for adaptive optimizers (average over micro-batches)
+    if self.pass_loss_to_optim:
+      self._accumulated_loss += loss_val.item()
+
     # backward pass, with gradient scaling if training in fp16
     self.scaler.scale(loss).backward()
 
@@ -128,7 +139,12 @@ class TorchEngine(torch.nn.Module):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
       # step the optimizer, step the scaler if training in fp16
-      self.scaler.step(self.optimizer)
+      if self.pass_loss_to_optim:
+        avg_loss = self._accumulated_loss / self.accumulation_steps
+        self._accumulated_loss = 0.0
+        self.scaler.step(self.optimizer, loss=avg_loss)
+      else:
+        self.scaler.step(self.optimizer)
       self.scaler.update()
 
       # flush the gradients
@@ -140,8 +156,12 @@ class TorchEngine(torch.nn.Module):
 
     return loss_val
 
+  def get_optim_diagnostics(self):
+    """Return optimizer diagnostics dict if available."""
+    return getattr(self.optimizer, 'diagnostics', {})
+
   @torch.no_grad()
-  def eval(self, dataloader):
+  def eval(self, dataloader, max_batches=100):
     """Evaluate model on a dataloader."""
 
     self.model.eval()
@@ -161,6 +181,8 @@ class TorchEngine(torch.nn.Module):
 
       total_loss += loss.item()
       num_batches += 1
+      if max_batches and num_batches >= max_batches:
+        break
 
     # reduce loss across processes
     if dist.is_initialized():
@@ -172,6 +194,6 @@ class TorchEngine(torch.nn.Module):
       num_batches = num_batches_tensor.item()
 
     # calculate average loss
-    avg_loss = total_loss.item() / num_batches.item()
+    avg_loss = total_loss / num_batches
 
     return avg_loss
