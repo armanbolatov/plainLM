@@ -1,24 +1,27 @@
 """
 Sweep runner that creates individual runs with LR in folder/wandb names.
 
-Experiment structure:
-  experiments/{method}/lr_{lr_str}/metrics.json
+Experiment layout (one root per model size):
+  exps_70m/
+    config/sweep_*.yaml      <- per-method base configs (out_dir points here)
+    experiments/{method}/lr_{lr_str}/metrics.json
+    plots/*.png
 
-Wandb run names:
-  {method}_lr_{lr_str}
+Wandb run name: {method}_lr_{lr_str}
 
 Usage:
-  python sweep_run.py --config config/sweep_standard.yaml
-  python sweep_run.py --config config/sweep_standard.yaml --lr 3e-4
-  python sweep_run.py --all
+  python sweep_run.py                                      # run all 70m sweeps
+  python sweep_run.py --exp-root exps_160m                 # run all 160m sweeps
+  python sweep_run.py --config exps_70m/config/sweep_L1.yaml
+  python sweep_run.py --config exps_70m/config/sweep_L1.yaml --lr 3e-4
+  python sweep_run.py --dry-run
 """
-import yaml, os, sys, subprocess, argparse
+import yaml, os, subprocess, argparse, glob
 
 
 def lr_to_str(lr):
     """Convert LR float to clean string: 1e-4 -> '1e-4', 3e-4 -> '3e-4'"""
-    s = f'{lr:.0e}'  # e.g. '3e-04'
-    # clean up: '3e-04' -> '3e-4'
+    s = f'{lr:.0e}'
     base, exp = s.split('e')
     exp = str(int(exp))
     return f'{base}e{exp}'
@@ -34,8 +37,6 @@ def run_single(base_config_path, lr, dry_run=False):
 
     # Override LR to scalar
     cfg['lr'] = lr
-
-    # Set experiment name with LR
     cfg['exp_name'] = f'{method}/lr_{lr_str}'
     cfg['wandb_run_name'] = f'{method}_lr_{lr_str}'
 
@@ -50,17 +51,14 @@ def run_single(base_config_path, lr, dry_run=False):
     if dry_run:
         return False
 
-    # Write temp config
     tmp_cfg_path = f'/tmp/sweep_{method}_lr_{lr_str}.yaml'
     with open(tmp_cfg_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
-    # Run training (no job_idx!)
     result = subprocess.run(
         ['python', 'train.py', '--config', tmp_cfg_path],
         cwd='/home/arman/plainLM'
     )
-
     os.remove(tmp_cfg_path)
     return result.returncode == 0
 
@@ -73,39 +71,49 @@ def run_config(config_path, specific_lr=None, dry_run=False):
     lrs = cfg.get('lr', [])
     if not isinstance(lrs, list):
         lrs = [lrs]
-
     if specific_lr is not None:
         lrs = [specific_lr]
 
     method = cfg['exp_name']
-    print(f'\n{"="*50}')
-    print(f'  {method} ({len(lrs)} LRs)')
-    print(f'{"="*50}')
-
+    print(f'\n{"="*50}\n  {method} ({len(lrs)} LRs)\n{"="*50}')
     for lr in lrs:
         run_single(config_path, lr, dry_run=dry_run)
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, help='Single config to run')
-    parser.add_argument('--lr', type=float, help='Specific LR to run')
-    parser.add_argument('--all', action='store_true', help='Run all sweep configs')
-    parser.add_argument('--dry-run', action='store_true', help='Just print what would run')
+    parser = argparse.ArgumentParser(
+        description='Run a sweep of single-LR training jobs.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument('--exp-root', type=str, default='exps_70m',
+                        help='Experiment root folder (default: exps_70m). '
+                             'Configs are read from {exp-root}/config/sweep_*.yaml.')
+    parser.add_argument('--config', type=str, default=None,
+                        help='Run only a single config file (overrides --exp-root for selection).')
+    parser.add_argument('--lr', type=float, default=None,
+                        help='Run only a single LR (used with --config).')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Just print what would run, do not actually run training.')
     args = parser.parse_args()
 
     os.environ.setdefault('TORCHINDUCTOR_CACHE_DIR', os.path.expanduser('~/.cache/torch_inductor'))
     os.makedirs(os.environ['TORCHINDUCTOR_CACHE_DIR'], exist_ok=True)
 
-    if args.all:
-        import glob
-        configs = sorted(glob.glob('/home/arman/plainLM/config/sweep_*.yaml'))
-        for cfg_path in configs:
-            run_config(cfg_path, dry_run=args.dry_run)
-    elif args.config:
+    if args.config:
         run_config(args.config, specific_lr=args.lr, dry_run=args.dry_run)
     else:
-        parser.print_help()
+        config_dir = os.path.abspath(os.path.join(args.exp_root, 'config'))
+        if not os.path.isdir(config_dir):
+            print(f'ERROR: config dir {config_dir} does not exist')
+            return
+        configs = sorted(glob.glob(os.path.join(config_dir, 'sweep_*.yaml')))
+        if not configs:
+            print(f'ERROR: no sweep_*.yaml configs found in {config_dir}')
+            return
+        print(f'Found {len(configs)} configs in {config_dir}')
+        for cfg_path in configs:
+            run_config(cfg_path, dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

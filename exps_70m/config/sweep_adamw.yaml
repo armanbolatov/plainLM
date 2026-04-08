@@ -35,9 +35,9 @@ lr_end_pct: null
 log_every_steps: 50
 print_progress: true
 use_wandb: true
-wandb_project: scion_sweep
+wandb_project: scion_sweep_70m
 wandb_dir: ./logs/wandb
-out_dir: ./experiments
+out_dir: ./exps_70m/experiments
 over_write: true
 resume: false
 resume_step: null
@@ -45,7 +45,7 @@ resume_exp_name: null
 save_last_checkpoint: true
 save_intermediate_checkpoints: false
 save_every_steps: null
-optim: scion
+optim: adamw
 lr:
 - 1.0e-05
 - 3.0e-05
@@ -55,13 +55,6 @@ lr:
 - 0.003
 - 0.01
 - 0.03
-scion_norm_steps: 5
-scion_momentum: 0.1
-matrix_scale: 4.0
-embed_tokens_scale: 64.0
-lm_head_scale: 4096
-oned_params_scale: 8
-scion_adaptive: L1
-scion_unconstrained: false
-wandb_run_name: L1
-exp_name: L1
+fused_optim: false
+wandb_run_name: adamw
+exp_name: adamw

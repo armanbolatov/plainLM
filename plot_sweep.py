@@ -1,12 +1,27 @@
-"""Generate sweep comparison plots for SCION variants + baselines."""
-import json, glob, os
+"""
+Generate sweep comparison plots for SCION variants + baselines.
+
+Usage:
+  python plot_sweep.py [exp_root]
+
+  exp_root defaults to ./exps_70m. The script reads metrics from
+  {exp_root}/experiments/*/lr_*/metrics.json and writes plots to
+  {exp_root}/plots/.
+
+Examples:
+  python plot_sweep.py                  # 70m
+  python plot_sweep.py exps_70m         # explicit 70m
+  python plot_sweep.py exps_160m        # 160m
+"""
+import json, glob, os, sys
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-EXPERIMENTS_DIR = '/home/arman/plainLM/experiments'
-OUTPUT_DIR = '/home/arman/plainLM/plots'
+EXP_ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath('exps_70m')
+EXPERIMENTS_DIR = os.path.join(EXP_ROOT, 'experiments')
+OUTPUT_DIR = os.path.join(EXP_ROOT, 'plots')
 
 SWEEPS = {
     'L1':         {'label': 'SCION NGN (constr)',       'color': '#9467bd', 'marker': 'D',  'ls': '--'},
@@ -19,22 +34,19 @@ SWEEPS = {
 
 def load_all():
     exps = {}
-    # Support both old (job_idx_N) and new (lr_X) directory structures
-    for pattern in [f'{EXPERIMENTS_DIR}/*/lr_*/metrics.json',
-                    f'{EXPERIMENTS_DIR}/*/job_idx_*/metrics.json']:
-        for path in sorted(glob.glob(pattern)):
-            parts = path.split('/')
-            exp = parts[-3]
-            if exp not in SWEEPS:
-                continue
-            with open(path) as f:
-                m = json.load(f)
-            peak_lr = max(m['lr']) if isinstance(m['lr'], list) else m['lr']
-            if exp not in exps:
-                exps[exp] = []
-            # avoid duplicates
-            if not any(abs(lr - peak_lr) < 1e-10 for lr, _ in exps[exp]):
-                exps[exp].append((peak_lr, m))
+    for path in sorted(glob.glob(f'{EXPERIMENTS_DIR}/*/lr_*/metrics.json')):
+        parts = path.split('/')
+        exp = parts[-3]
+        if exp not in SWEEPS:
+            continue
+        with open(path) as f:
+            m = json.load(f)
+        if not m or 'lr' not in m:
+            continue
+        peak_lr = max(m['lr']) if isinstance(m['lr'], list) else m['lr']
+        if exp not in exps:
+            exps[exp] = []
+        exps[exp].append((peak_lr, m))
     for exp in exps:
         exps[exp].sort(key=lambda x: x[0])
     return exps
@@ -121,6 +133,15 @@ def plot_lr_eff_vs_lr(exps):
     plt.close()
     print('saved lr_eff_vs_lr.png')
 
+def ema_smooth(values, alpha=0.05):
+    """Apply EMA smoothing to a list of values."""
+    out = []
+    val = values[0]
+    for v in values:
+        val = alpha * v + (1 - alpha) * val
+        out.append(val)
+    return out
+
 # ── Training curves — best LR per method ────────────────────────────────────
 def plot_training_curves_best(exps):
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -130,14 +151,18 @@ def plot_training_curves_best(exps):
         best_lr, best_m = min(exps[exp], key=lambda x: final_loss(x[1]))
         steps = best_m['step']
         losses = best_m['train/loss']
-        ax.plot(steps, losses, label=f"{cfg['label']} (lr={best_lr:.0e})",
-                color=cfg['color'], linestyle=cfg['ls'], linewidth=1.5, alpha=0.85)
+        # EMA smoothing
+        losses_smooth = ema_smooth(losses, alpha=0.05)
+        ax.plot(steps, losses_smooth, label=f"{cfg['label']} (lr={best_lr:.0e})",
+                color=cfg['color'], linestyle=cfg['ls'], linewidth=2.0, alpha=0.9)
     ax.set_xlabel('Step', fontsize=12)
     ax.set_ylabel('Train Loss', fontsize=12)
-    ax.set_title('Training Curves — Best LR per Method', fontsize=13)
-    ax.legend(fontsize=8, loc='upper right', ncol=2)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(3.2, 7.0)
+    ax.set_yscale('log')
+    ax.set_title('Training Curves — Best LR per Method (EMA smoothed)', fontsize=13)
+    ax.legend(fontsize=9, loc='upper right', ncol=2)
+    ax.grid(True, alpha=0.3, which='both')
+    ax.set_xlim(0, 5500)
+    ax.set_ylim(3.2, 5.0)
     plt.tight_layout()
     plt.savefig(f'{OUTPUT_DIR}/training_curves_best.png', dpi=150)
     plt.close()

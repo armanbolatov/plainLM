@@ -38,5 +38,4 @@ logs/
 # Ignore build artifacts
 build/
 
-# Keep metrics.json files in experiments/
-# (they're committed for the sweep results)
+paper
