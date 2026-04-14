@@ -3,9 +3,14 @@ Sweep runner that creates individual runs with LR in folder/wandb names.
 
 Experiment layout (one root per model size):
   exps_70m/
-    config/sweep_*.yaml      <- per-method base configs (out_dir points here)
+    config/_base.yaml          <- shared keys for all methods at this scale
+    config/sweep_*.yaml        <- per-method overrides only (optim, scion_*, exp_name, ...)
     experiments/{method}/lr_{lr_str}/metrics.json
     plots/*.png
+
+When loading a sweep_*.yaml, sweep_run.py merges it on top of _base.yaml from
+the same directory. The final, merged config is what gets passed to train.py,
+so older "self-contained" configs (without an _base.yaml) still work.
 
 Wandb run name: {method}_lr_{lr_str}
 
@@ -27,10 +32,22 @@ def lr_to_str(lr):
     return f'{base}e{exp}'
 
 
+def load_config_with_base(config_path):
+    """Load a sweep config, merging it on top of _base.yaml from the same dir."""
+    with open(config_path) as f:
+        overrides = yaml.safe_load(f)
+    base_path = os.path.join(os.path.dirname(config_path), '_base.yaml')
+    if os.path.exists(base_path):
+        with open(base_path) as f:
+            cfg = yaml.safe_load(f)
+        cfg.update(overrides)
+        return cfg
+    return overrides
+
+
 def run_single(base_config_path, lr, dry_run=False):
     """Run a single training job with given LR."""
-    with open(base_config_path) as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config_with_base(base_config_path)
 
     method = cfg['exp_name']
     lr_str = lr_to_str(lr)
@@ -65,8 +82,7 @@ def run_single(base_config_path, lr, dry_run=False):
 
 def run_config(config_path, specific_lr=None, dry_run=False):
     """Run all LRs for a config, or a specific LR."""
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config_with_base(config_path)
 
     lrs = cfg.get('lr', [])
     if not isinstance(lrs, list):
@@ -108,6 +124,9 @@ def main():
             print(f'ERROR: config dir {config_dir} does not exist')
             return
         configs = sorted(glob.glob(os.path.join(config_dir, 'sweep_*.yaml')))
+        # _base.yaml is not a sweep config; sweep_*.yaml glob already excludes it,
+        # but be defensive in case the glob pattern is changed.
+        configs = [c for c in configs if not os.path.basename(c).startswith('_')]
         if not configs:
             print(f'ERROR: no sweep_*.yaml configs found in {config_dir}')
             return

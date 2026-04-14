@@ -112,6 +112,7 @@ def intialize_optimizer(param_groups, cfg, model=None):
       momentum=getattr(cfg, 'scion_momentum', cfg.beta1),
       weight_decay=cfg.weight_decay,
       adaptive=getattr(cfg, 'scion_adaptive', False),
+      mean=getattr(cfg, 'scion_mean', 'HM'),
     )
 
   elif cfg.optim == 'muonmax_momo':

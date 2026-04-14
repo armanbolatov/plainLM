@@ -39,3 +39,6 @@ logs/
 build/
 
 paper
+
+__pycache__/
+*.log
