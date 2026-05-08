@@ -1,0 +1,31 @@
+Traceback (most recent call last):
+  File "/shared/home/arman.bolatov/plainLM/train.py", line 101, in <module>
+    app.run(main)
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/absl/app.py", line 367, in run
+    _run_main(main, args)
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/absl/app.py", line 312, in _run_main
+    sys.exit(main(argv))
+             ^^^^^^^^^^
+  File "/shared/home/arman.bolatov/plainLM/train.py", line 44, in main
+    engine = TorchEngine(model, cfg, device, local_rank, ckpt)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/shared/home/arman.bolatov/plainLM/engine/engine.py", line 70, in __init__
+    self.model = model.to(device)
+                 ^^^^^^^^^^^^^^^^
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1384, in to
+    return self._apply(convert)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/torch/nn/modules/module.py", line 965, in _apply
+    param_applied = fn(param)
+                    ^^^^^^^^^
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1370, in convert
+    return t.to(
+           ^^^^^
+torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
+Search for `cudaErrorDevicesUnavailable' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+

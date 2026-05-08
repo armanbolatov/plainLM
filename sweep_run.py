@@ -72,9 +72,13 @@ def run_single(base_config_path, lr, dry_run=False):
     with open(tmp_cfg_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
+    # Run train.py from the repo root (where this script lives), so that
+    # relative paths in the config (e.g. out_dir: ./exps_410m/experiments)
+    # resolve correctly regardless of the cluster path.
+    repo_root = os.path.dirname(os.path.abspath(__file__))
     result = subprocess.run(
         ['python', 'train.py', '--config', tmp_cfg_path],
-        cwd='/home/arman/plainLM'
+        cwd=repo_root,
     )
     os.remove(tmp_cfg_path)
     return result.returncode == 0

@@ -85,7 +85,7 @@ def _plot_vs_step(exps, out_dir, fname, title, ylabel, metric_key,
     _savefig(out_dir, fname)
 
 
-def plot_lr_sweep(exps, out_dir):
+def plot_lr_sweep(exps, out_dir, title_suffix=''):
     plt.figure(figsize=(10, 6))
     ax = plt.gca()
     for method, cfg in SWEEPS.items():
@@ -104,11 +104,30 @@ def plot_lr_sweep(exps, out_dir):
     ax.set_xscale('log'); ax.set_yscale('log')
     ax.set_xlabel('Learning Rate', fontsize=12)
     ax.set_ylabel('Final Train Loss', fontsize=12)
-    ax.set_title('LR Sweep — Final Loss (5500 steps, 72M, 1024 ctx)', fontsize=13)
+    title = f'LR Sweep — Final Loss{title_suffix}'
+    ax.set_title(title, fontsize=13)
     ax.legend(fontsize=9, loc='upper left', ncol=2)
     ax.grid(True, alpha=0.3, which='both')
-    ax.set_ylim(3.2, 8.0)
+    ax.set_ylim(2.5, 8.0)
     _savefig(out_dir, 'lr_sweep_loss.png')
+
+
+def _infer_title_suffix(exps):
+    """Infer ' (N steps, ~XM params, K ctx)' suffix from any loaded run."""
+    for method in exps:
+        if not exps[method]:
+            continue
+        _, m = exps[method][0]
+        n_steps = m['step'][-1] if 'step' in m and m['step'] else None
+        n_params = m.get('n_params', [None])[0] if isinstance(m.get('n_params'), list) else m.get('n_params')
+        bits = []
+        if n_steps:
+            bits.append(f'{n_steps} steps')
+        if n_params:
+            bits.append(f'~{round(n_params/1e6)}M params')
+        if bits:
+            return ' (' + ', '.join(bits) + ')'
+    return ''
 
 
 def make_all_plots(exp_root):
@@ -119,26 +138,35 @@ def make_all_plots(exp_root):
     exps = load_all(experiments_dir, SWEEPS.keys())
     print(f'Loaded {sum(len(v) for v in exps.values())} jobs across {len(exps)} experiments\n')
 
-    plot_lr_sweep(exps, out_dir)
+    suffix = _infer_title_suffix(exps)
+
+    plot_lr_sweep(exps, out_dir, title_suffix=suffix)
     _plot_vs_lr(exps, out_dir, 'dampening_vs_lr.png',
-                'Adaptive Dampening vs LR',
+                'Adaptive Dampening vs LR' + suffix,
                 'Dampening Factor (mid-training)', 'optim/dampening')
     _plot_vs_lr(exps, out_dir, 'lr_eff_vs_lr.png',
-                'Effective LR vs Nominal LR',
+                'Effective LR vs Nominal LR' + suffix,
                 'Effective Learning Rate (mid-training)', 'optim/lr_eff',
                 extra_diag=True)
+    # last training step (for xlim) — taken from any run
+    last_step = None
+    for method in exps:
+        if exps[method]:
+            last_step = exps[method][0][1]['step'][-1]
+            break
     _plot_vs_step(exps, out_dir, 'training_curves_best.png',
-                  'Training Curves — Best LR per Method (EMA smoothed)',
+                  'Training Curves — Best LR per Method (EMA smoothed)' + suffix,
                   'Train Loss', 'train/loss',
-                  smooth=True, xlim=(0, 5500), ylim=(3.2, 5.0), use_ylog=True)
+                  smooth=True, xlim=(0, last_step) if last_step else None,
+                  ylim=(2.5, 8.0), use_ylog=True)
     _plot_vs_step(exps, out_dir, 'dual_norm_training.png',
-                  'Dual Norm² over Training — Best LR per Method',
+                  'Dual Norm² over Training — Best LR per Method' + suffix,
                   'Dual Norm Squared', 'optim/dual_norm_sq')
     _plot_vs_step(exps, out_dir, 'grad_norm_training.png',
-                  'Gradient Norm over Training — Best LR per Method',
+                  'Gradient Norm over Training — Best LR per Method' + suffix,
                   'Gradient Norm', 'optim/grad_norm')
     _plot_vs_step(exps, out_dir, 'lr_eff_training.png',
-                  'Effective LR over Training — Best LR per Method',
+                  'Effective LR over Training — Best LR per Method' + suffix,
                   'Effective LR', 'optim/lr_eff')
     print(f'\nAll plots saved to {out_dir}/')
 

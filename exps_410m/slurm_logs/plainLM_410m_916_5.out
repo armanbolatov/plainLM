@@ -1,0 +1,14 @@
+=== Task 5 ===
+config = exps_410m/config/sweep_adamw.yaml
+lr     = 3e-3
+host   = mbz-titan-3
+gpu    = 0
+Creating experiment directory: ./exps_410m/experiments/adamw/lr_3e-3
+Number of parameters: 411_304_960
+Number of non-embedding parameters: 308_331_520
+Compiling the model...
+
+==================================================
+  adamw (1 LRs)
+==================================================
+  RUN  adamw lr=3e-3

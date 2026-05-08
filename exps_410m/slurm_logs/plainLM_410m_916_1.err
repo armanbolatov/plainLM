@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/shared/home/arman.bolatov/plainLM/train.py", line 101, in <module>
+    app.run(main)
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/absl/app.py", line 367, in run
+    _run_main(main, args)
+  File "/shared/home/arman.bolatov/miniconda3/envs/plainLM/lib/python3.12/site-packages/absl/app.py", line 312, in _run_main
+    sys.exit(main(argv))
+             ^^^^^^^^^^
+  File "/shared/home/arman.bolatov/plainLM/train.py", line 52, in main
+    raise ValueError('trainloader too short!')
+ValueError: trainloader too short!

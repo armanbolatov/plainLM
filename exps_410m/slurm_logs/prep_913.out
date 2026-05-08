@@ -1,0 +1,8 @@
+Concatenating and chunking in sequances of length 2049.
+Number of tokens in chunked_ds: 9_919_485_615
+Chunkization time: 12.0 min
+Number of tokens in train_ds: 9_909_486_495
+Number of tokens in valid_ds: 9_999_120
+Saving trainset
+Saving validset
+Succesfull completion.

@@ -1,0 +1,13 @@
+weight_decay: 0.0
+beta1: 0.9
+optim: scion
+scion_norm_steps: 5
+scion_momentum: 0.1
+matrix_scale: 4.0
+embed_tokens_scale: 64.0
+lm_head_scale: 4096
+oned_params_scale: 8
+scion_adaptive: adaptive_global
+scion_unconstrained: false
+wandb_run_name: L1
+exp_name: L1
