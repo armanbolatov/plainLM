@@ -18,31 +18,9 @@ def _latest_checkpoint(ckpt_dir: str, prefix: str = 'checkpoint_') -> str | None
 
 
 def save_checkpoint(step, model, engine, cfg, metrics):
-
-  optimizer = engine.optimizer
-  scheduler = engine.scheduler
-  scaler = engine.scaler
-
-  save_optim = getattr(cfg, 'save_optim', True)
-  save_scheduler = getattr(cfg, 'save_scheduler', True)
-  save_scaler = getattr(cfg, 'save_scaler', True)
-
-  state = {
-    'step': step,
-    'state_dict': model.state_dict(),
-    'optimizer': optimizer.state_dict() if save_optim else None,
-    'scheduler': scheduler.state_dict() if scheduler and save_scheduler else {},
-    'scaler': scaler.state_dict() if save_scaler else None,
-  }
-
+  # Model checkpoints intentionally not saved (uses too much disk for our experiments).
+  # Only metrics.json is written so that downstream analysis still works.
   exp_dir = utils.get_exp_dir_path(cfg)
-
-  # Save ckpt
-  save_path = os.path.join(exp_dir, f'ckpt_step_{step}.pth')
-  print(f'Saving checkpoint to {save_path}')
-  torch.save(state, save_path)
-
-  # Save metrics
   metrics_path = os.path.join(exp_dir, 'metrics.json')
   with open(metrics_path, 'w') as f:
     json.dump(dict(metrics), f)

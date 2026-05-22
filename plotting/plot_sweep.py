@@ -15,6 +15,7 @@ from ._common import (plt, load_all, has_key, final_loss, ema_smooth)
 
 SWEEPS = {
     'L1':           {'label': 'SCION HM (constr)',    'color': '#9467bd', 'marker': 'D', 'ls': '--'},
+    'HM':           {'label': 'SCION HM (constr)',    'color': '#9467bd', 'marker': 'D', 'ls': '--'},
     'L1_unc':       {'label': 'SCION HM (unconstr)',  'color': '#8c564b', 'marker': 'P', 'ls': '--'},
     'min':          {'label': 'SCION min (constr)',   'color': '#2ca02c', 'marker': '^', 'ls': '-'},
     'polyak':       {'label': 'SCION polyak (constr)','color': '#d62728', 'marker': 'v', 'ls': '-'},

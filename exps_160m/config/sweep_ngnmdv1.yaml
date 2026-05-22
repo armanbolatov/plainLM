@@ -1,5 +1,0 @@
-weight_decay: 0.0
-beta1: 0.9
-optim: ngnmdv1
-wandb_run_name: ngnmdv1
-exp_name: ngnmdv1

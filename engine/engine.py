@@ -115,7 +115,7 @@ class TorchEngine(torch.nn.Module):
     with self.ctx:
       output = self.model(inputs, attn_mask)
       logits = getattr(output, 'logits', output)
-      loss = self.criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
+      loss = self.criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
       loss = loss / self.accumulation_steps
 
     # detach for logging (scale up to undo the division above)
@@ -174,7 +174,7 @@ class TorchEngine(torch.nn.Module):
       with self.ctx:
         output = self.model(inputs, attn_mask)
         logits = getattr(output, 'logits', output)
-        loss = self.criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
+        loss = self.criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
 
       if torch.isnan(loss) or loss is None:
         raise ValueError('Validation loss is nan')

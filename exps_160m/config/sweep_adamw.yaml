@@ -1,5 +1,0 @@
-weight_decay: 0.0
-beta1: 0.9
-optim: adamw
-wandb_run_name: adamw
-exp_name: adamw

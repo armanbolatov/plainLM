@@ -4,14 +4,53 @@ import torch
 from .lr_schedule import WarmupCosine, WSD, WarmupConstant, LinearCooldown
 
 
+def _resolve_scion_adaptive(cfg):
+  """Translate scion config fields into the new Scion `adaptive` API.
+
+      adaptive in {False, 'ngn', 'sps', 'ngn_pl', 'sps_pl'}
+
+  Accepts both the new API (set `scion_adaptive: ngn|sps|ngn_pl|sps_pl` directly) and
+  the legacy form (`scion_adaptive: adaptive_global|adaptive_per_layer` + `scion_mean: HM|min`).
+  """
+  a = getattr(cfg, 'scion_adaptive', False)
+  if a in (False, None, 'false', 'False'):
+    return False
+  if a in ('ngn', 'sps', 'ngn_pl', 'sps_pl'):
+    return a
+  # Legacy: 'adaptive_global' / 'adaptive_per_layer' + scion_mean.
+  if a in ('adaptive_global', 'adaptive_per_layer'):
+    suffix = '_pl' if a == 'adaptive_per_layer' else ''
+    mean = getattr(cfg, 'scion_mean', 'HM') or 'HM'
+    if mean == 'HM':
+      return 'ngn' + suffix
+    if mean == 'min':
+      return 'sps' + suffix
+    raise ValueError(
+      f"Legacy scion_mean={mean!r} is no longer supported. Use 'HM' or 'min'."
+    )
+  raise ValueError(f"Unknown scion_adaptive value: {a!r}. Use False, 'ngn', 'sps', 'ngn_pl', or 'sps_pl'.")
+
+
 def _build_scion_param_groups(model, cfg):
-  """Build per-layer param groups for Scion, matching ScionVar conventions."""
+  """Build per-layer param groups for Scion, matching ScionVar conventions.
+
+  Per-group `polyak_multiplier` lets each group's Polyak step land near lr.
+  Without it, raw Polyak gives ~0.08 for matrix vs ~5e-5 for lm_head — no single
+  global multiplier can fit both. Defaults below put all groups in ~lr=1e-4.
+  """
   ns_steps = getattr(cfg, 'scion_norm_steps', 5)
   embed_scale = getattr(cfg, 'embed_tokens_scale', 64.0)
   matrix_scale = getattr(cfg, 'matrix_scale', 4.0)
   lm_head_scale = getattr(cfg, 'lm_head_scale', 2048.0)
   oned_scale = getattr(cfg, 'oned_params_scale', 1.0)
   unconstrained = getattr(cfg, 'scion_unconstrained', False)
+  # Per-group polyak multipliers. Read from cfg with sensible defaults that map
+  # raw polyak values (under polyak_form='lin_sdn') into the ~lr=1e-4 ballpark.
+  default_pm = getattr(cfg, 'polyak_multiplier', 1.0)
+  matrix_pm = getattr(cfg, 'matrix_polyak_mult', default_pm)
+  embed_pm = getattr(cfg, 'embed_polyak_mult', default_pm)
+  lm_head_pm = getattr(cfg, 'lm_head_polyak_mult', default_pm)
+  oned_pm = getattr(cfg, 'oned_polyak_mult', default_pm)
 
   groups = []
   for name, p in model.named_parameters():
@@ -20,17 +59,21 @@ def _build_scion_param_groups(model, cfg):
 
     if 'embed_tokens' in name or 'wte' in name:
       group = dict(params=[p], norm='Sign', norm_kwargs={'normalized': False},
-                   scale=embed_scale, unconstrained=unconstrained)
+                   scale=embed_scale, unconstrained=unconstrained,
+                   polyak_multiplier=embed_pm)
     elif 'lm_head' in name:
       group = dict(params=[p], norm='Sign', norm_kwargs={},
-                   scale=lm_head_scale, unconstrained=unconstrained)
+                   scale=lm_head_scale, unconstrained=unconstrained,
+                   polyak_multiplier=lm_head_pm)
     elif p.ndim >= 2:
       group = dict(params=[p], norm='Spectral',
                    norm_kwargs={'normalized': False, 'steps': ns_steps},
-                   scale=matrix_scale, unconstrained=unconstrained)
+                   scale=matrix_scale, unconstrained=unconstrained,
+                   polyak_multiplier=matrix_pm)
     else:
       group = dict(params=[p], norm='Sign', norm_kwargs={'normalized': False},
-                   scale=oned_scale, unconstrained=unconstrained)
+                   scale=oned_scale, unconstrained=unconstrained,
+                   polyak_multiplier=oned_pm)
 
     groups.append(group)
 
@@ -111,8 +154,10 @@ def intialize_optimizer(param_groups, cfg, model=None):
       lr=cfg.lr,
       momentum=getattr(cfg, 'scion_momentum', cfg.beta1),
       weight_decay=cfg.weight_decay,
-      adaptive=getattr(cfg, 'scion_adaptive', False),
-      mean=getattr(cfg, 'scion_mean', 'HM'),
+      adaptive=_resolve_scion_adaptive(cfg),
+      polyak_multiplier=getattr(cfg, 'polyak_multiplier', 1.0),
+      polyak_use_scale=getattr(cfg, 'polyak_use_scale', False),
+      polyak_form=getattr(cfg, 'polyak_form', None),
     )
 
   elif cfg.optim == 'muonmax_momo':

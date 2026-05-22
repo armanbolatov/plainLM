@@ -39,6 +39,10 @@ logs/
 build/
 
 paper
+exps_410m_*
+exps_70m_*
 
 __pycache__/
 *.log
+*.err
+*.out
