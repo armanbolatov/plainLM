@@ -54,9 +54,9 @@ class TorchEngine(torch.nn.Module):
 
     self.device = device
 
-    # Whether optimizer needs loss value (e.g. Scion adaptive, NGN-MDv1, MaxMuon-Momo)
+    # Whether optimizer needs loss value (e.g. Scion-NGN, NGN-MDv1, MaxMuon-Momo)
     self.pass_loss_to_optim = (
-      getattr(cfg, 'scion_adaptive', False) or
+      bool(getattr(cfg, 'scion_ngn', False)) or
       cfg.optim in ('ngnmdv1', 'muonmax_momo')
     )
     self._accumulated_loss = 0.0

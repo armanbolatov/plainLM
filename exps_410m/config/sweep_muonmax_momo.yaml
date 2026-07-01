@@ -7,3 +7,7 @@ muon_momentum: 0.95
 muon_lr_scale: 10.0
 truncate_loss: 0.0
 stale_nuc: true
+wandb_project: scion_410m_full_chinchilla
+steps_budget: 15680
+divergence_threshold: 10.0
+out_dir: ./exps_410m/experiments

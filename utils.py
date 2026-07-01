@@ -172,6 +172,12 @@ def log(cfg, metrics, micro_step, train_loss, train_loss_array, valid_loss, opti
   elif isinstance(train_loss_array, torch.Tensor):
     train_loss_avg = train_loss_array.item()
 
+  def _ppl(x):
+    try:
+      return math.exp(x)
+    except OverflowError:
+      return float('inf')
+
   new_metrics = {
     'micro_step': micro_step,
     'step': micro_step // cfg.grad_accumulation_steps,
@@ -179,13 +185,13 @@ def log(cfg, metrics, micro_step, train_loss, train_loss_array, valid_loss, opti
     'lr': optimizer.param_groups[0].get('lr', float('NaN')),
     'train/loss': train_loss.item(),
     'train/loss_avg': train_loss_avg,
-    'train/ppl': math.exp(train_loss),
-    'train/ppl_avg': math.exp(train_loss_avg),
+    'train/ppl': _ppl(train_loss),
+    'train/ppl_avg': _ppl(train_loss_avg),
   }
 
   if valid_loss is not None:
     new_metrics['valid/loss'] = valid_loss
-    new_metrics['valid/ppl'] = math.exp(valid_loss)
+    new_metrics['valid/ppl'] = _ppl(valid_loss)
 
   if optim_diagnostics:
     new_metrics.update(optim_diagnostics)

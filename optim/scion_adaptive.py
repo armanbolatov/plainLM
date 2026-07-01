@@ -1,36 +1,44 @@
 """SCION optimizer (Spectral Conditioning by Iterative Normalisation).
 
-Five modes, selected by the `adaptive` argument:
+Three orthogonal axes select the variant:
 
-    adaptive=False     Standard SCION (no adaptive step):
-                         x ← (1 - lr) x - lr · scale · lmo(buf_g)
+    ngn   : False | 'local' | 'global'
+              False    -> plain SCION (no NGN adaptation)
+              'local'  -> per-layer Polyak rho_l = alpha_l * 2f / (s_l * d_l)
+              'global' -> single global Polyak rho = alpha_l * 2f / D,
+                          where D = sum_l (s_l * d_l) is the scale-consistent
+                          SCION dual norm
 
-    adaptive='ngn'     SCION-NGN, harmonic mean of cfg.lr with the GLOBAL Polyak:
-                         γ = lr · polyak_global / (lr + polyak_global)
-                         x ← (1 - γ) x - γ · scale · lmo(buf_g)
+    form  : 'constrained' | 'regularized'   (ignored when ngn=False)
+              constrained  -> dp = -gamma * s_l * LMO(m_l)
+              regularized  -> dp = -gamma * s_l * factor * LMO(m_l)
+                              factor = s_l * d_l  (local) or D (global)
 
-    adaptive='sps'     Stochastic Polyak Stepsize, GLOBAL Polyak capped by cfg.lr:
-                         γ = min(lr, polyak_global)
-                         x ← (1 - γ) x - γ · scale · lmo(buf_g)
+    cap   : 'hm' | 'min'    (ignored when ngn=False)
+              hm   -> gamma = (eta * rho) / (eta + rho)   (harmonic mean)
+              min  -> gamma = min(eta, rho)                (SPS-style)
 
-    adaptive='ngn_pl'  NGN with per-LAYER Polyak: each parameter l gets its own
-                         γ_l = lr · polyak_l / (lr + polyak_l)
+User-facing variants (how configs name them):
 
-    adaptive='sps_pl'  SPS with per-LAYER Polyak:
-                         γ_l = min(lr, polyak_l)
+    uScion              ngn=False, unconstrained=True
+    L-NGN-Scion-CSD     ngn='local',  form='constrained',  unconstrained=True
+    L-NGN-Scion-RSD     ngn='local',  form='regularized',  unconstrained=True
+    G-NGN-Scion-CSD     ngn='global', form='constrained',  unconstrained=True
+    G-NGN-Scion-RSD     ngn='global', form='regularized',  unconstrained=True
 
-Global Polyak (uses Σ_l dn_l, then squares):
-        polyak_global = 2 · loss / (Σ_l dn_l)²       where dn_l = ⟨g_l, lmo_l(g_l)⟩
+Notation:
+    g_l       raw gradient at layer l
+    m_l       momentum buffer at layer l
+    eta       scheduler LR at this step
+    s_l       per-group LMO scale       (param-group 'scale')
+    alpha_l   per-group Polyak mult     (param-group 'polyak_multiplier')
+    d_l       <g_l, LMO_l(g_l)>         (per-layer dual-norm contribution)
+    D         sum_l (s_l * d_l)         (scale-consistent global dual norm)
+    f         minibatch loss
 
-Per-layer Polyak (each layer treated independently):
-        polyak_l      = 2 · loss / dn_l²
-
-The dual norm is computed on the raw gradient; momentum is only used inside the
-update direction.
-
-`polyak_multiplier` scales the Polyak step before combining with cfg.lr.
-`unconstrained=True` drops the `(1 - γ) x` shrinkage so the step becomes plain
-`x ← x - γ · scale · lmo(buf_g)`.
+The dual norm is computed on the raw gradient; momentum is only used in the
+update direction. `unconstrained=True` drops the (1-gamma)*p shrinkage so the
+step becomes plain p <- p - gamma * s_l * factor * LMO(m_l).
 """
 
 import torch
@@ -109,34 +117,40 @@ norm_dict = {'Spectral': Spectral, 'Sign': Sign}
 # Optimizer.
 # ----------------------------------------------------------------------------
 
-_ADAPTIVE_VALID = (False, 'ngn', 'sps', 'ngn_pl', 'sps_pl')
+_NGN_VALID = (False, 'local', 'global')
+_FORM_VALID = ('constrained', 'regularized')
+_CAP_VALID = ('hm', 'min')
+_D_NORM_VALID = (None, 'd_out', 'sqrt_N', 'N')
 
 
 class Scion(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, momentum=1.0, norm='Spectral',
                  norm_kwargs=None, scale=1.0, unconstrained=False, weight_decay=0.0,
-                 adaptive=False, polyak_multiplier=1.0, polyak_use_scale=False,
-                 polyak_form=None):
+                 polyak_multiplier=1.0, ngn=False, form='constrained', cap='hm',
+                 polyak_d_norm=None):
         if lr < 0:
             raise ValueError(f'Invalid learning rate: {lr}')
         if momentum < 0:
             raise ValueError(f'Invalid momentum: {momentum}')
-        if adaptive not in _ADAPTIVE_VALID:
-            raise ValueError(f"adaptive must be one of {_ADAPTIVE_VALID}, got {adaptive!r}")
+        if ngn not in _NGN_VALID:
+            raise ValueError(f"ngn must be one of {_NGN_VALID}, got {ngn!r}")
+        if form not in _FORM_VALID:
+            raise ValueError(f"form must be one of {_FORM_VALID}, got {form!r}")
+        if cap not in _CAP_VALID:
+            raise ValueError(f"cap must be one of {_CAP_VALID}, got {cap!r}")
+        if polyak_d_norm not in _D_NORM_VALID:
+            raise ValueError(f"polyak_d_norm must be one of {_D_NORM_VALID}, got {polyak_d_norm!r}")
         if norm_kwargs is None:
             norm_kwargs = {}
 
         defaults = dict(lr=lr, momentum=momentum, norm=norm, norm_kwargs=norm_kwargs,
                         scale=scale, unconstrained=unconstrained, weight_decay=weight_decay,
                         polyak_multiplier=polyak_multiplier)
-        self.adaptive = adaptive
+        self.polyak_d_norm = polyak_d_norm
+        self.ngn = ngn
+        self.form = form
+        self.cap = cap
         self.polyak_multiplier = polyak_multiplier
-        # Backwards compatibility: polyak_use_scale=True maps to 'sqr_sdn'.
-        if polyak_form is None:
-            polyak_form = 'sqr_sdn' if polyak_use_scale else 'sqr_dn'
-        if polyak_form not in ('sqr_dn', 'sqr_sdn', 'lin_sdn'):
-            raise ValueError(f"polyak_form must be 'sqr_dn', 'sqr_sdn', or 'lin_sdn', got {polyak_form!r}")
-        self.polyak_form = polyak_form
         self.diagnostics = {}
         super().__init__(params, defaults)
 
@@ -145,13 +159,13 @@ class Scion(torch.optim.Optimizer):
     # ------------------------------------------------------------------------
 
     def step(self, loss=None):
-        if self.adaptive:
-            self._step_adaptive(loss)
+        if self.ngn:
+            self._step_ngn(loss)
         else:
             self._step_standard()
 
     # ------------------------------------------------------------------------
-    # Standard SCION (no adaptive step).
+    # Plain SCION (no NGN adaptation).
     # ------------------------------------------------------------------------
 
     def _step_standard(self):
@@ -176,7 +190,6 @@ class Scion(torch.optim.Optimizer):
                 grad_sq += g.float().pow(2).sum().item()
                 dn_list.append((g * norm_backend.lmo(g)).sum().item())
 
-                # momentum buffer on raw gradient
                 if momentum != 1:
                     buf = state.setdefault('momentum_buffer', torch.zeros_like(g))
                     buf.mul_(1 - momentum).add_(g, alpha=momentum)
@@ -196,22 +209,19 @@ class Scion(torch.optim.Optimizer):
                               dual_norm_sq=None, polyak=None)
 
     # ------------------------------------------------------------------------
-    # NGN / SPS (adaptive step using the SCION global dual norm).
+    # NGN step (local or global; constrained or regularized; HM or min cap).
     # ------------------------------------------------------------------------
 
-    def _step_adaptive(self, loss):
+    def _step_ngn(self, loss):
         if loss is None:
-            raise ValueError(f"adaptive={self.adaptive!r} requires loss. Pass loss=val to step().")
+            raise ValueError(f"ngn={self.ngn!r} requires loss. Pass loss=val to step().")
 
-        per_layer = self.adaptive.endswith('_pl')
-        mode = self.adaptive[:-3] if per_layer else self.adaptive  # 'ngn' or 'sps'
-
-        # Pass 1: per-layer dual norm on RAW gradient, then update momentum buffers
-        # and cache LMOs of the buffered gradient for the update pass.
+        # Pass 1: per-layer d_l on raw grad, update momentum buffers, cache LMO(m).
         dn_list, grad_sq = [], 0.0
         cached = []
         for group in self.param_groups:
             momentum = group['momentum']
+            scale = group['scale']
             norm_backend = norm_dict[group['norm']](**group['norm_kwargs'])
             group_cache = []
             for p in group['params']:
@@ -222,79 +232,120 @@ class Scion(torch.optim.Optimizer):
                 state = self.state[p]
 
                 grad_sq += g.float().pow(2).sum().item()
-                dn = (g * norm_backend.lmo(g)).sum().item()
-                dn_list.append(dn)
+                d_l = (g * norm_backend.lmo(g)).sum().item()
+                dn_list.append(scale * d_l)          # contribution to D = sum s_l * d_l
 
                 if momentum != 1:
                     buf = state.setdefault('momentum_buffer', torch.zeros_like(g))
                     buf.mul_(1 - momentum).add_(g, alpha=momentum)
                     g = buf
 
-                group_cache.append((p, norm_backend.lmo(g), dn))
+                group_cache.append((p, norm_backend.lmo(g), d_l))
             cached.append((group, group_cache))
 
-        # Polyak step in the SCION dual norm. Global: uses (Σ dn_l)². Per-layer:
-        # each parameter gets polyak_l = 2f / dn_l².
-        dual_norm_sq = sum(dn_list) ** 2
-        if per_layer:
-            polyak_global = None
-        else:
-            polyak_global = self.polyak_multiplier * 2.0 * loss / max(dual_norm_sq, 1e-12)
+        # Global dual norm. D uses s_l * d_l (scale-consistent for the Polyak
+        # denominator, so each layer contributes in proportion to its step size).
+        # D_bare uses bare d_l, used as the regularized-form factor — including
+        # s_l here would double-count the LMO scale and blow up updates at
+        # large-scale groups (lm_head s=4096 gives s_l^2 = 1.7e7 in the update).
+        D = sum(dn_list)
+        D_bare = sum(d_l for _, group_cache in cached
+                     for _, lmo_m, d_l in group_cache if lmo_m is not None)
 
-        # Pass 2: combine cfg.lr with polyak and apply update.
+        # Pass 2: per-param rho, gamma, and update.
+        group_polyak, group_lr_eff = {}, {}
         update_sq, lr, lr_eff = 0.0, 0.0, 0.0
         for group, group_cache in cached:
             lr = group['lr']
             scale = group['scale']
             unconstrained = group['unconstrained']
             weight_decay = group.get('weight_decay', 0.0)
-            polyak_mult_l = group.get('polyak_multiplier', self.polyak_multiplier)
-
-            for p, lmo_g, dn in group_cache:
-                if lmo_g is None:
+            alpha_l = group.get('polyak_multiplier', self.polyak_multiplier)
+            # polyak_skip: if True, the per-group NGN cap is disabled (gamma=lr).
+            # Used to isolate "L-NGN cap only on matrix layers" experiments.
+            polyak_skip = group.get('polyak_skip', False)
+            # polyak_d_norm: normalize d_l (per layer) before using in the Polyak
+            # denominator. Choices: None, 'd_out', 'sqrt_N', 'N'. Lets a single
+            # global alpha balance per-layer dynamics that otherwise differ wildly
+            # because of Sign-LMO L1 dual norms vs Spectral-LMO nuclear norms.
+            polyak_acc, eff_acc, count = 0.0, 0.0, 0
+            for p, lmo_m, d_l in group_cache:
+                if lmo_m is None:
                     continue
 
-                if per_layer:
-                    if self.polyak_form == 'lin_sdn':
-                        denom = scale * dn                       # 2f / (scale · dn) — Frank-Wolfe / Demyanov-Rubinov short step
-                    elif self.polyak_form == 'sqr_sdn':
-                        denom = (scale * dn) ** 2                # 2f / (scale · dn)² — SGD-Polyak with scale correction
-                    else:                                        # 'sqr_dn'
-                        denom = dn ** 2                          # 2f / dn² — original SCION-NGN, no scale correction
-                    polyak_l = polyak_mult_l * 2.0 * loss / max(denom, 1e-12)
+                # Normalize d_l per the chosen scheme (default: no normalization).
+                if self.polyak_d_norm == 'd_out' and p.ndim >= 1:
+                    d_l_eff = d_l / max(p.shape[0], 1)
+                elif self.polyak_d_norm == 'sqrt_N':
+                    d_l_eff = d_l / max(p.numel() ** 0.5, 1)
+                elif self.polyak_d_norm == 'N':
+                    d_l_eff = d_l / max(p.numel(), 1)
                 else:
-                    polyak_l = polyak_global
+                    d_l_eff = d_l
 
-                if lr <= 0 or polyak_l <= 0:
-                    lr_eff = lr
-                elif mode == 'ngn':
-                    lr_eff = lr * polyak_l / (lr + polyak_l)    # harmonic mean
-                else:                                           # 'sps'
-                    lr_eff = min(lr, polyak_l)                  # stochastic Polyak
+                # Polyak step. Linear (Demyanov–Rubinov) form, scale-consistent.
+                if polyak_skip:
+                    # Disable the cap for this group: behaves like plain Scion.
+                    rho = float('inf')
+                    reg_factor = d_l
+                elif self.ngn == 'global':
+                    rho = alpha_l * 2.0 * loss / max(D, 1e-12)
+                    reg_factor = D_bare           # bare dual norm sum (no s_l)
+                else:  # 'local'
+                    rho = alpha_l * 2.0 * loss / max(scale * d_l_eff, 1e-12)
+                    reg_factor = d_l              # bare layer dual norm (no s_l)
 
-                update_sq += (lr_eff * scale) ** 2 * lmo_g.float().pow(2).sum().item()
+                # Effective LR via HM or min cap.
+                if lr <= 0 or rho <= 0 or rho == float('inf'):
+                    gamma = lr
+                elif self.cap == 'hm':
+                    gamma = lr * rho / (lr + rho)
+                else:                                  # 'min'
+                    gamma = min(lr, rho)
+                lr_eff = gamma
+
+                # CSD: gamma * s_l in the LMO direction (s_l is the per-layer
+                # LMO scale, hand-tuned). RSD: gamma * ||g||_* — the dual norm
+                # already carries the gradient magnitude, no extra s_l (else
+                # lm_head with s=4096 + d_l~25k would blow up the update by 5
+                # orders of magnitude).
+                if self.form == 'regularized':
+                    step_coef = gamma * reg_factor
+                else:
+                    step_coef = gamma * scale
+
+                polyak_acc += rho
+                eff_acc += gamma
+                count += 1
+
+                update_sq += step_coef ** 2 * lmo_m.float().pow(2).sum().item()
                 if weight_decay != 0:
-                    p.data.mul_(1 - lr_eff * weight_decay)
+                    p.data.mul_(1 - gamma * weight_decay)
                 if unconstrained:
-                    p.data.add_(lmo_g, alpha=-lr_eff * scale)
+                    p.data.add_(lmo_m, alpha=-step_coef)
                 else:
-                    p.data.mul_(1 - lr_eff).add_(lmo_g, alpha=-lr_eff * scale)
+                    p.data.mul_(1 - gamma).add_(lmo_m, alpha=-step_coef)
+            if count > 0:
+                group_polyak[scale] = polyak_acc / count
+                group_lr_eff[scale] = eff_acc / count
 
         dampening = (lr / lr_eff) if lr_eff > 0 else 1.0
         self._log_diagnostics(lr_eff, dn_list, grad_sq, update_sq,
-                              dampening=dampening, dual_norm_sq=dual_norm_sq,
-                              polyak=polyak_global)
+                              dampening=dampening, dual_norm_sq=D ** 2,
+                              polyak=None,
+                              group_polyak=group_polyak, group_lr_eff=group_lr_eff, lr=lr,
+                              global_dual_norm=D if self.ngn == 'global' else None)
 
     # ------------------------------------------------------------------------
     # Diagnostics.
     # ------------------------------------------------------------------------
 
     def _log_diagnostics(self, lr_eff, dn_list, grad_sq, update_sq,
-                         dampening, dual_norm_sq, polyak):
+                         dampening, dual_norm_sq, polyak,
+                         group_polyak=None, group_lr_eff=None, lr=None,
+                         global_dual_norm=None):
         L = len(dn_list)
         dn_t = torch.tensor(dn_list) if L > 0 else torch.zeros(1)
-        # Use sum(d_l)^2 for the global SCION dual norm. Standard mode falls back
-        # to sum(d_l^2) since it has no notion of a global Polyak.
         if dual_norm_sq is None:
             dual_norm_sq = sum(d ** 2 for d in dn_list)
         self.diagnostics = {
@@ -308,3 +359,13 @@ class Scion(torch.optim.Optimizer):
         }
         if polyak is not None:
             self.diagnostics['optim/polyak'] = polyak
+        if global_dual_norm is not None:
+            self.diagnostics['optim/global_dual_norm'] = global_dual_norm
+        if group_polyak is not None:
+            for s in sorted(group_polyak.keys()):
+                tag = f'g{int(s)}' if float(s).is_integer() else f'g{s}'
+                self.diagnostics[f'optim/polyak_{tag}'] = group_polyak[s]
+                if group_lr_eff is not None and s in group_lr_eff:
+                    self.diagnostics[f'optim/lr_eff_{tag}'] = group_lr_eff[s]
+                    if lr is not None and group_lr_eff[s] > 0:
+                        self.diagnostics[f'optim/damp_{tag}'] = lr / group_lr_eff[s]

@@ -1,48 +1,42 @@
-# Ignore Python cache files
+# Python
 __pycache__/
 *.py[cod]
-
-# Ignore Jupyter Notebook checkpoints
 .ipynb_checkpoints/
+plainLM.egg-info/
 
-# Ignore virtual environment directories
+# Virtual environments
 venv/
 env/
 .venv/
 .env/
 
-# Ignore log files
-*.log
-
-# Ignore data files
-*.csv
-
-# Ignore any other temporary or sensitive files
-*.tmp
-*.bak
-*.swp
-
-# Ignore specific system files
-.DS_Store
-Thumbs.db
-
-# Ignore Weights & Biases (wandb) files
-wandb/
-*.wandb
-logs/
-
-# Ignore checkpoints (large files)
-*.pth
-*.ckpt
-
-# Ignore build artifacts
-build/
-
-paper
-exps_410m_*
-exps_70m_*
-
-__pycache__/
+# Logs
 *.log
 *.err
 *.out
+logs/
+
+# Data
+*.csv
+
+# Temporary / editor / OS
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# Weights & Biases
+wandb/
+*.wandb
+
+# Checkpoints
+*.pth
+*.ckpt
+
+# Build artifacts
+build/
+
+# Local paper drafts, archived experiments
+paper
+archive

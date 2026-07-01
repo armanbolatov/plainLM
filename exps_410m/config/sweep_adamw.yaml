@@ -1,6 +1,12 @@
 weight_decay: 0.0
 beta1: 0.9
+beta2: 0.95
+eps: 1.0e-8
 optim: adamw
 fused_optim: false
 wandb_run_name: adamw
 exp_name: adamw
+wandb_project: scion_410m_full_chinchilla
+steps_budget: 15680
+divergence_threshold: 10.0
+out_dir: ./exps_410m/experiments

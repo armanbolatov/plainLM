@@ -1,0 +1,9 @@
+weight_decay: 0.1
+beta1: 0.95
+optim: muonmax_momo
+wandb_run_name: muonmax_momo
+exp_name: muonmax_momo
+muon_momentum: 0.95
+muon_lr_scale: 10.0
+truncate_loss: 0.0
+stale_nuc: true

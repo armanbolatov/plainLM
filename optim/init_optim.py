@@ -4,31 +4,17 @@ import torch
 from .lr_schedule import WarmupCosine, WSD, WarmupConstant, LinearCooldown
 
 
-def _resolve_scion_adaptive(cfg):
-  """Translate scion config fields into the new Scion `adaptive` API.
+def _resolve_scion_ngn(cfg):
+  """Parse `scion_ngn` into the validated Scion arg.
 
-      adaptive in {False, 'ngn', 'sps', 'ngn_pl', 'sps_pl'}
-
-  Accepts both the new API (set `scion_adaptive: ngn|sps|ngn_pl|sps_pl` directly) and
-  the legacy form (`scion_adaptive: adaptive_global|adaptive_per_layer` + `scion_mean: HM|min`).
+      ngn in {False, 'local', 'global'}
   """
-  a = getattr(cfg, 'scion_adaptive', False)
+  a = getattr(cfg, 'scion_ngn', False)
   if a in (False, None, 'false', 'False'):
     return False
-  if a in ('ngn', 'sps', 'ngn_pl', 'sps_pl'):
+  if a in ('local', 'global'):
     return a
-  # Legacy: 'adaptive_global' / 'adaptive_per_layer' + scion_mean.
-  if a in ('adaptive_global', 'adaptive_per_layer'):
-    suffix = '_pl' if a == 'adaptive_per_layer' else ''
-    mean = getattr(cfg, 'scion_mean', 'HM') or 'HM'
-    if mean == 'HM':
-      return 'ngn' + suffix
-    if mean == 'min':
-      return 'sps' + suffix
-    raise ValueError(
-      f"Legacy scion_mean={mean!r} is no longer supported. Use 'HM' or 'min'."
-    )
-  raise ValueError(f"Unknown scion_adaptive value: {a!r}. Use False, 'ngn', 'sps', 'ngn_pl', or 'sps_pl'.")
+  raise ValueError(f"Unknown scion_ngn value: {a!r}. Use False, 'local', or 'global'.")
 
 
 def _build_scion_param_groups(model, cfg):
@@ -51,6 +37,10 @@ def _build_scion_param_groups(model, cfg):
   embed_pm = getattr(cfg, 'embed_polyak_mult', default_pm)
   lm_head_pm = getattr(cfg, 'lm_head_polyak_mult', default_pm)
   oned_pm = getattr(cfg, 'oned_polyak_mult', default_pm)
+  # Optional: disable the NGN cap on Sign-LMO layers (embed, oned, lm_head) so
+  # only matrix layers get NGN dampening. Used for the "cap matrix only"
+  # simplification experiment.
+  skip_sign = bool(getattr(cfg, 'polyak_skip_sign', False))
 
   groups = []
   for name, p in model.named_parameters():
@@ -60,20 +50,20 @@ def _build_scion_param_groups(model, cfg):
     if 'embed_tokens' in name or 'wte' in name:
       group = dict(params=[p], norm='Sign', norm_kwargs={'normalized': False},
                    scale=embed_scale, unconstrained=unconstrained,
-                   polyak_multiplier=embed_pm)
+                   polyak_multiplier=embed_pm, polyak_skip=skip_sign)
     elif 'lm_head' in name:
       group = dict(params=[p], norm='Sign', norm_kwargs={},
                    scale=lm_head_scale, unconstrained=unconstrained,
-                   polyak_multiplier=lm_head_pm)
+                   polyak_multiplier=lm_head_pm, polyak_skip=skip_sign)
     elif p.ndim >= 2:
       group = dict(params=[p], norm='Spectral',
                    norm_kwargs={'normalized': False, 'steps': ns_steps},
                    scale=matrix_scale, unconstrained=unconstrained,
-                   polyak_multiplier=matrix_pm)
+                   polyak_multiplier=matrix_pm, polyak_skip=False)
     else:
       group = dict(params=[p], norm='Sign', norm_kwargs={'normalized': False},
                    scale=oned_scale, unconstrained=unconstrained,
-                   polyak_multiplier=oned_pm)
+                   polyak_multiplier=oned_pm, polyak_skip=skip_sign)
 
     groups.append(group)
 
@@ -154,10 +144,11 @@ def intialize_optimizer(param_groups, cfg, model=None):
       lr=cfg.lr,
       momentum=getattr(cfg, 'scion_momentum', cfg.beta1),
       weight_decay=cfg.weight_decay,
-      adaptive=_resolve_scion_adaptive(cfg),
       polyak_multiplier=getattr(cfg, 'polyak_multiplier', 1.0),
-      polyak_use_scale=getattr(cfg, 'polyak_use_scale', False),
-      polyak_form=getattr(cfg, 'polyak_form', None),
+      ngn=_resolve_scion_ngn(cfg),
+      form=getattr(cfg, 'scion_form', 'constrained'),
+      cap=getattr(cfg, 'scion_cap', 'hm'),
+      polyak_d_norm=getattr(cfg, 'polyak_d_norm', None),
     )
 
   elif cfg.optim == 'muonmax_momo':

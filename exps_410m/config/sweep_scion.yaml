@@ -1,0 +1,17 @@
+weight_decay: 0.0
+beta1: 0.9
+optim: scion
+scion_norm_steps: 5
+scion_momentum: 0.1
+matrix_scale: 4.0
+embed_tokens_scale: 64.0
+lm_head_scale: 4096
+oned_params_scale: 8
+scion_ngn: false
+scion_unconstrained: false
+exp_name: scion
+wandb_run_name: scion
+wandb_project: scion_410m_full_chinchilla
+steps_budget: 15680
+divergence_threshold: 10.0
+out_dir: ./exps_410m/experiments

@@ -1,0 +1,20 @@
+weight_decay: 0.0
+beta1: 0.9
+optim: scion
+scion_norm_steps: 5
+scion_momentum: 0.1
+matrix_scale: 4.0
+embed_tokens_scale: 64.0
+lm_head_scale: 4096
+oned_params_scale: 8
+scion_ngn: local
+scion_form: constrained
+scion_cap: hm
+scion_unconstrained: false      # ← CONSTRAINED: shrinkage (1-γ)p gives v6-style LR robustness
+# v6 polyak mults at 70M (original headline config that gave val=3.527 with broad LR plateau)
+matrix_polyak_mult: 1.0e-3
+oned_polyak_mult: 5.0e-4
+embed_polyak_mult: 5.0e-2
+lm_head_polyak_mult: 1.0
+exp_name: lngn_scion
+wandb_run_name: lngn_scion

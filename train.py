@@ -78,6 +78,11 @@ def main(_):
     if cfg.eval and step % cfg.eval_every_steps == 0 and is_step:
       print_master('Evaluating on validation set')
       valid_loss = engine.eval(validloader)
+      # Early stop on divergence (val > log(vocab_size) means worse than uniform random)
+      divergence_threshold = getattr(cfg, 'divergence_threshold', None)
+      if divergence_threshold is not None and valid_loss is not None and valid_loss > divergence_threshold:
+        print_master(f'=== Diverged: val/loss={valid_loss:.3f} > {divergence_threshold} at step {step}. Early stop. ===')
+        break
 
     # Log
     if master_process and step % cfg.log_every_steps == 0 and is_step:

@@ -3,3 +3,7 @@ beta1: 0.9
 optim: ngnmdv1
 wandb_run_name: ngnmdv1
 exp_name: ngnmdv1
+wandb_project: scion_410m_full_chinchilla
+steps_budget: 15680
+divergence_threshold: 10.0
+out_dir: ./exps_410m/experiments
