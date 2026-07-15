@@ -1,0 +1,51 @@
+## 70M (d512/6L/8H, untied), AdamW, FineWeb .bin shards. Constant-LR trunk;
+## cooldown.py adds the WSD decay tail.
+
+seed: 1996
+sampler_seed: 1996
+
+train_shards: "/home/arman/modded-nanogpt-SOAP/data/fineweb10B/fineweb_train_*.bin"
+val_shard: "/home/arman/modded-nanogpt-SOAP/data/fineweb10B/fineweb_val_000000.bin"
+vocab_size: 50304
+seq_len: 1024
+num_workers: 2
+valid_tokens: 500000
+
+# --- model ---
+model: 'transformer'
+d_model: 512
+mlp_class: 'glu'
+expand: '8/3'
+n_layers: 6
+n_heads: 8
+rms_norm: True
+tie_embeddings: False
+qk_norm: True
+embed_norm: True
+torch_compile: True
+allow_tf32: True
+
+# --- budget: ~20 tokens/param (compute-optimal) ---
+steps_budget: 5500
+micro_batch_size: 16
+grad_accumulation_steps: 16
+dtype: 'bfloat16'
+
+# --- optimizer ---
+optim: 'adamw'
+lr: 0.0022
+weight_decay: 0.1
+grad_clip: 1.0
+fused_optim: True
+beta1: 0.8
+beta2: 0.999
+eps: 1.0e-8
+
+# --- schedule: warmup + constant trunk; cooldown.py adds the decay tail ---
+scheduler: 'warmup_constant'
+warmup_steps: 100
+lr_start: 0.0
+lr_end: 0.0
+
+out_dir: 'exp/70m'
+use_wandb: False

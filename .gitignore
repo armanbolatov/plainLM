@@ -30,3 +30,9 @@ Thumbs.db
 # Ignore Weights & Biases (wandb) files
 wandb/
 *.wandb
+# Ignore experiment checkpoints (large)
+exp/
+
+# but keep the evaluation results
+!results/*.json
+paper
