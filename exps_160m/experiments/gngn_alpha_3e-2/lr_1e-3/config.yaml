@@ -3,6 +3,7 @@ beta2: 0.95
 cooldown_steps: 0.25
 d_model: 768
 deterministic: false
+divergence_threshold: 10.0
 dtype: bfloat16
 embed_polyak_mult: 0.03
 embed_tokens_scale: 64.0
@@ -51,7 +52,7 @@ scion_norm_steps: 5
 scion_unconstrained: false
 seed: 100
 seq_len: 1024
-steps_budget: 12200
+steps_budget: 3050
 tie_embeddings: false
 torch_compile: true
 trainset_path: /shared/home/arman.bolatov/data/fwedu_10BT/tokenized_EleutherAI_gpt-neox-20b/ctx_1024/train
@@ -59,7 +60,7 @@ use_wandb: true
 validset_path: /shared/home/arman.bolatov/data/fwedu_10BT/tokenized_EleutherAI_gpt-neox-20b/ctx_1024/valid
 vocab_size: 50280
 wandb_dir: ./logs/wandb
-wandb_project: scion_160m
+wandb_project: scion_160m_quarter_chinchilla
 wandb_run_name: gngn_alpha_3e-2_lr_1e-3
 warmup_steps: 0
 weight_decay: 0.0

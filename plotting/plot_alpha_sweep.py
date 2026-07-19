@@ -1,46 +1,42 @@
-"""Generic α sweep plot for G-NGN-Scion across 70M / 160M / 410M.
+"""α sweep plot for G-NGN-Scion across all three scales.
 
 Usage:
-    python plotting/plot_alpha_sweep.py --scale 70m
-    python plotting/plot_alpha_sweep.py --scale 160m
-    python plotting/plot_alpha_sweep.py --scale 410m
+    python plotting/plot_alpha_sweep.py
 
-Writes exps_{scale}/alpha_sweep.png. Compares α=3e-2, 5e-2, 7e-2.
+Writes paper/figures/alpha_sweep.{png,pdf}. One figure, three subplots
+(70M / 160M / 410M), gradient palette across α ∈ {1e-2, 3e-2, 5e-2, 7e-2, 1e-1}.
 """
-import argparse
 import math
 import os
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import numpy as np
 import wandb
 
-SCALES = {
-    '70m': dict(
-        projects=['steeldream/scion_70m_simplify'],
-        title='70M G-NGN-Scion: α (single global polyak multiplier) sweep — 5500 steps',
-        ylim=(3.3, 6.0),
-        out_dir='exps_70m',
-    ),
-    '160m': dict(
-        projects=['steeldream/scion_160m'],
-        title='160M G-NGN-Scion: α sweep — 12200 steps',
-        ylim=(2.9, 6.0),
-        out_dir='exps_160m',
-    ),
-    '410m': dict(
-        # α=3e-2 / 5e-2 / 7e-2 sweep was done at 1/4 Chinchilla; 7e-2 also at full.
-        projects=['steeldream/scion_410m_quarter_chinchilla', 'steeldream/scion_410m_full_chinchilla'],
-        title='410M G-NGN-Scion: α sweep (1/4 Chinchilla for 3e-2 & 5e-2; full for 7e-2)',
-        ylim=(2.6, 6.0),
-        out_dir='exps_410m',
-    ),
-}
+from _style import apply_style, LW, S_LINE
 
-SOURCES = [
-    ('α=3e-2', 'gngn_alpha_3e-2', 'C1', 's', '-'),
-    ('α=5e-2', 'gngn_alpha_5e-2', 'C2', 'v', '-'),
-    ('α=7e-2', 'gngn_alpha_7e-2', 'C3', '^', '-'),
+SCALES = [
+    ('70M',  ['steeldream/scion_70m_quarter_chinchilla'],  {}),
+    ('160M', ['steeldream/scion_160m_quarter_chinchilla'], {}),
+    ('410M', ['steeldream/scion_410m_quarter_chinchilla'], {}),
+]
+
+# Shared ylim across all subplots so scales compare directly.
+YLIM = (2.7, 5.3)
+
+# Sparse LR grid — one point per decade. Filter fetched data to just these,
+# so the 410M panel doesn't show extra 3e-N points from the old 11-LR runs.
+LR_GRID = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0]
+
+ALPHAS = [
+    (1e-2, 'gngn_alpha_1e-2'),
+    (3e-2, 'gngn_alpha_3e-2'),
+    (5e-2, 'gngn_alpha_5e-2'),
+    (7e-2, 'gngn_alpha_7e-2'),
+    (1e-1, 'gngn_alpha_1e-1'),
 ]
 
 
@@ -57,9 +53,7 @@ def fetch(prefix, projects):
     for proj in projects:
         for r in api.runs(proj, per_page=200):
             n = r.name or ''
-            if not n.startswith(prefix + '_lr_'):
-                continue
-            if r.state != 'finished':
+            if not n.startswith(prefix + '_lr_') or r.state != 'finished':
                 continue
             lr = lr_from_name(n)
             if lr is None:
@@ -73,57 +67,56 @@ def fetch(prefix, projects):
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument('--scale', required=True, choices=list(SCALES.keys()))
-    args = p.parse_args()
-    cfg = SCALES[args.scale]
+    apply_style()
+    cmap = mpl.colormaps['viridis']
+    colors = [cmap(i / (len(ALPHAS) - 1)) for i in range(len(ALPHAS))]
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-    print(f'{"alpha":<12} {"n":>4} {"peak":>8} {"±1 dec":>10} {"±2 dec":>10}')
-    print('-' * 50)
-    for label, prefix, color, marker, ls in SOURCES:
-        d = fetch(prefix, cfg['projects'])
-        finite = {k: v for k, v in d.items() if np.isfinite(v)}
-        if not finite:
-            print(f'{label:<12} (no data)')
-            continue
-        lr_opt = min(finite, key=finite.get)
-        best = finite[lr_opt]
-        s1 = max((v for lr, v in finite.items() if 0.1 <= lr / lr_opt <= 10), default=best) - best
-        s2 = max((v for lr, v in finite.items() if 0.01 <= lr / lr_opt <= 100), default=best) - best
-        print(f'{label:<12} {len(finite):>4} {best:>8.3f} {s1:>10.3f} {s2:>10.3f}')
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True,
+                             sharey=True)
 
-        lrs = sorted(d.keys())
-        vals = [d[lr] for lr in lrs]
-        axes[0].plot(lrs, vals, color=color, marker=marker, linestyle=ls,
-                     lw=2, ms=8, label=label)
+    def closest_grid_lr(lr):
+        """Snap a fetched LR to the nearest LR_GRID point (log-space), or None
+        if it's not close enough (>10% off in log). Keeps 1e-3 but drops 3e-3."""
+        for g in LR_GRID:
+            if abs(math.log10(lr) - math.log10(g)) < 0.1:
+                return g
+        return None
 
-        xs = [math.log10(lr / lr_opt) for lr in sorted(finite.keys())]
-        ys = [finite[lr] for lr in sorted(finite.keys())]
-        axes[1].plot(xs, ys, color=color, marker=marker, linestyle=ls, lw=2, ms=8,
-                     label=f'{label}  (opt lr={lr_opt:.0e}, val={best:.3f})')
+    for ax, (title, projects, prefix_overrides) in zip(axes, SCALES):
+        for (alpha, prefix), color in zip(ALPHAS, colors):
+            prefix = prefix_overrides.get(alpha, prefix)
+            d = fetch(prefix, projects)
+            if not d:
+                continue
+            # Keep only points that snap onto LR_GRID
+            keep = {}
+            for lr, v in d.items():
+                g = closest_grid_lr(lr)
+                if g is not None and (g not in keep or v < keep[g]):
+                    keep[g] = v
+            if not keep:
+                continue
+            lrs = sorted(keep.keys())
+            vals = [keep[lr] for lr in lrs]
+            label = fr'$\alpha={alpha:g}$'
+            ax.plot(lrs, vals, color=color, lw=LW, label=label)
+            ax.scatter(lrs, vals, color=color, s=S_LINE,
+                       edgecolor='white', linewidth=1.0)
+        ax.set_xscale('log')
+        ax.set_xlabel('Learning rate')
+        ax.set_ylim(*YLIM)
+        ax.set_title(title)
 
-    for ax in axes:
-        ax.set_yscale('log')
-        ax.set_ylim(*cfg['ylim'])
-        ax.grid(alpha=0.3, which='both')
-    axes[0].set_xscale('log')
-    axes[0].set_xlabel('learning rate')
-    axes[0].set_ylabel('val/loss')
-    axes[0].set_title('Absolute LR')
-    axes[0].legend(fontsize=10, loc='upper left')
-    axes[1].axvline(0, color='black', alpha=0.3, ls='--')
-    axes[1].set_xlabel(r'$\log_{10}(\mathrm{lr}/\mathrm{lr}_{\mathrm{opt}})$')
-    axes[1].set_ylabel('val/loss')
-    axes[1].set_title("Aligned around each method's optimum")
-    axes[1].legend(fontsize=10, loc='upper left')
+    axes[0].set_ylabel('Validation loss')
+    axes[0].legend(loc='upper left', framealpha=0.95)
 
-    plt.suptitle(cfg['title'], fontsize=12, y=1.0)
-    plt.tight_layout()
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out = os.path.join(repo_root, cfg['out_dir'], 'alpha_sweep.png')
-    plt.savefig(out, dpi=110, bbox_inches='tight')
-    print(f'\nSaved {out}')
+    out_dir = os.path.join(repo_root, 'paper', 'figures')
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, 'alpha_sweep.png')
+    plt.savefig(out, dpi=150)
+    plt.savefig(out.replace('.png', '.pdf'))
+    print(f'Saved {out} (+ .pdf)')
 
 
 if __name__ == '__main__':

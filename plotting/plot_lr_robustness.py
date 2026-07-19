@@ -5,47 +5,50 @@ Usage:
     python plotting/plot_lr_robustness.py --scale 160m
     python plotting/plot_lr_robustness.py --scale 410m
 
-Writes exps_{scale}/lr_robustness.png. Pulls from wandb.
-Only includes runs with state='finished' (skips currently running / crashed).
+Writes exps_{scale}/lr_robustness.{png,pdf}. Pulls from wandb, finished runs
+only. Style: seaborn whitegrid + default fonts + thick lines (see _style.py).
 """
 import argparse
 import math
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import matplotlib.pyplot as plt
 import numpy as np
 import wandb
 from collections import defaultdict
 
+from _style import apply_style, PALETTE, LW, S_LINE
+
 SCALES = {
     '70m': dict(
         projects=['steeldream/scion_70m_final', 'steeldream/scion_70m_simplify'],
-        title='70M Chinchilla LR robustness — 5500 steps',
-        ylim=(3.3, 6.0),
+        title='70M Chinchilla',
+        ylim=(3.3, 10.0),
         out_dir='exps_70m',
     ),
     '160m': dict(
         projects=['steeldream/scion_160m'],
-        title='160M Chinchilla LR robustness — 12200 steps = 3.2B tokens = 20 TPP',
-        ylim=(2.9, 6.0),
+        title='160M Chinchilla',
+        ylim=(2.9, 10.0),
         out_dir='exps_160m',
     ),
     '410m': dict(
         projects=['steeldream/scion_410m_full_chinchilla'],
-        title='410M Full Chinchilla LR robustness — 15680 steps = 8.2B tokens = 20 TPP',
-        ylim=(2.6, 6.0),
+        title='410M Chinchilla',
+        ylim=(2.6, 10.0),
         out_dir='exps_410m',
     ),
 }
 
 METHODS = [
-    ('Scion',                   'scion',           'C0', 'd', '-'),
-    ('L-NGN-Scion',             'lngn_scion',      'C1', 'D', '-'),
-    ('G-NGN-Scion (α=7e-2)',    'gngn_alpha_7e-2', 'C2', 'v', '-'),
-    ('AdamW (β=.9/.95)',        'adamw',           'C3', 'P', '-'),
-    ('muonmax_momo',            'muonmax_momo',    'C4', 'X', '-'),
-    ('NGN-MDv1',                'ngnmdv1',         'C5', 'h', '-'),
+    ('Scion',                         'scion',           'o'),
+    ('L-NGN-Scion',                   'lngn_scion',      'D'),
+    (r'G-NGN-Scion ($\alpha=7\!\times\!10^{-2}$)', 'gngn_alpha_7e-2', 'v'),
+    ('AdamW',                         'adamw',           'P'),
+    ('Muonmax-Momo',                  'muonmax_momo',    'X'),
+    ('NGN-MDv1',                      'ngnmdv1',         'h'),
 ]
 
 
@@ -62,9 +65,7 @@ def fetch(projects):
     for proj in projects:
         for r in api.runs(proj, per_page=200):
             n = r.name or ''
-            if '_lr_' not in n:
-                continue
-            if r.state != 'finished':
+            if '_lr_' not in n or r.state != 'finished':
                 continue
             prefix = n.split('_lr_')[0]
             lr = lr_from_name(n)
@@ -84,37 +85,39 @@ def main():
     args = p.parse_args()
     cfg = SCALES[args.scale]
 
+    apply_style()
+
     data = fetch(cfg['projects'])
     print('Run counts by method:')
-    for _, prefix, _, _, _ in METHODS:
+    for _, prefix, _ in METHODS:
         print(f'  {prefix:18s} {len(data.get(prefix, {}))} LRs')
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5), constrained_layout=True)
 
     ax = axes[0]
-    for label, prefix, color, marker, ls in METHODS:
+    for label, prefix, marker in METHODS:
         d = data.get(prefix, {})
         if not d:
             continue
+        color = PALETTE[prefix]
         lrs = sorted(d.keys())
         vals = [d[lr] for lr in lrs]
-        ax.plot(lrs, vals, color=color, marker=marker, linestyle=ls,
-                linewidth=2, markersize=8, label=label)
+        ax.plot(lrs, vals, color=color, lw=LW, label=label, zorder=3)
+        ax.scatter(lrs, vals, color=color, marker=marker, s=S_LINE, zorder=4,
+                   edgecolor='white', linewidth=1.0)
     ax.set_xscale('log')
-    ax.set_xlabel('learning rate')
-    ax.set_ylabel('val/loss')
-    ax.set_title('Absolute LR')
-    ax.legend(fontsize=9, loc='upper left')
-    ax.grid(alpha=0.3, which='both')
     ax.set_yscale('log')
+    ax.set_xlabel('Learning rate')
+    ax.set_ylabel('Validation loss')
     ax.set_ylim(*cfg['ylim'])
 
     ax = axes[1]
-    for label, prefix, color, marker, ls in METHODS:
+    for label, prefix, marker in METHODS:
         d = data.get(prefix, {})
         finite = {lr: v for lr, v in d.items() if np.isfinite(v)}
         if not finite:
             continue
+        color = PALETTE[prefix]
         lr_opt = min(finite, key=finite.get)
         xs, ys = [], []
         for lr in sorted(d.keys()):
@@ -122,29 +125,28 @@ def main():
             if np.isfinite(v):
                 xs.append(math.log10(lr / lr_opt))
                 ys.append(v)
-        ax.plot(xs, ys, color=color, marker=marker, linestyle=ls,
-                linewidth=2, markersize=8,
-                label=f'{label}  (opt lr={lr_opt:.0e}, val={finite[lr_opt]:.3f})')
-    ax.axvline(0, color='black', alpha=0.3, linestyle='--')
-    ax.set_xlabel(r'$\log_{10}(\mathrm{lr} / \mathrm{lr}_{\mathrm{opt}})$')
-    ax.set_ylabel('val/loss')
-    ax.set_title("Aligned around each method's optimum")
-    ax.legend(fontsize=8, loc='upper left')
-    ax.grid(alpha=0.3)
+        ax.plot(xs, ys, color=color, lw=LW, label=label, zorder=3)
+        ax.scatter(xs, ys, color=color, marker=marker, s=S_LINE, zorder=4,
+                   edgecolor='white', linewidth=1.0)
+    ax.axvline(0, color='black', alpha=0.3, ls='--', lw=1.2)
     ax.set_yscale('log')
+    ax.set_xlabel(r'$\log_{10}(\eta / \eta^\star)$')
     ax.set_ylim(*cfg['ylim'])
+    ax.set_xlim(-2.5, 2.5)
 
-    plt.suptitle(cfg['title'], fontsize=13, y=1.0)
-    plt.tight_layout()
+    axes[0].legend(loc='upper left', framealpha=0.95)
+    fig.suptitle(cfg['title'])
+
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = os.path.join(repo_root, cfg['out_dir'], 'lr_robustness.png')
-    plt.savefig(out, dpi=110, bbox_inches='tight')
-    print(f'\nSaved {out}')
+    plt.savefig(out, dpi=150)
+    plt.savefig(out.replace('.png', '.pdf'))
+    print(f'\nSaved {out} (+ .pdf)')
 
     print('\nSpread analysis (val/loss - best):')
     print(f'{"method":<24} {"n":>3} {"peak":>7} {"opt lr":>10} {"±1 dec":>9} {"±2 dec":>9}')
     print('-' * 70)
-    for label, prefix, _, _, _ in METHODS:
+    for label, prefix, _ in METHODS:
         d = data.get(prefix, {})
         finite = {lr: v for lr, v in d.items() if np.isfinite(v)}
         if not finite:

@@ -31,7 +31,7 @@ sampler: sequential
 sampler_seed: null
 save_every_steps: null
 save_intermediate_checkpoints: false
-save_last_checkpoint: false
+save_last_checkpoint: true
 scheduler: wsd
 seed: 100
 seq_len: 1024
