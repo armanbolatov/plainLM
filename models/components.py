@@ -56,6 +56,28 @@ class GLU(nn.Module):
     return self.fc2(F.silu(x) * z)
 
 
+class GLUSplit(nn.Module):
+  """SwiGLU with gate and up kept as separate matrices.
+
+  Same parameters and same forward as `GLU`, but three 2-D tensors instead of
+  two. LMO-based optimizers (Scion, Muon) normalise per tensor, so the split
+  changes the update -- and it changes the tensor count that Lipschitz-style
+  schedulers use to compute kappa. Matches the LLaMA `w1`/`w2`/`c_proj` layout.
+  """
+
+  def __init__(self, dim: int, hidden_dim: int, multiple_of: int = 256):
+    super().__init__()
+    hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+    self.hidden_dim = hidden_dim
+    self.w1 = nn.Linear(dim, hidden_dim, bias=False)   # gate
+    self.w2 = nn.Linear(dim, hidden_dim, bias=False)   # up
+    self.fc2 = nn.Linear(hidden_dim, dim, bias=False)  # down
+
+  def forward(self, x):
+    # x: (bsz, T, dim)
+    return self.fc2(F.silu(self.w1(x)) * self.w2(x))
+
+
 class MLPReluSquared(nn.Module):
   """MLP with ReLU squared"""
 

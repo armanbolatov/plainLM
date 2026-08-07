@@ -3,6 +3,7 @@ beta2: 0.95
 cooldown_steps: 0.25
 d_model: 512
 deterministic: false
+divergence_threshold: 10.0
 dtype: bfloat16
 eval: true
 eval_every_steps: 100
@@ -15,7 +16,7 @@ lr: 3.0e-05
 lr_end: 1.0e-05
 lr_end_pct: null
 lr_start: 1.0e-05
-micro_batch_size: 8
+micro_batch_size: 16
 mlp_class: glu
 model: transformer
 muon_lr_scale: 10.0
@@ -49,7 +50,7 @@ use_wandb: true
 validset_path: /shared/home/arman.bolatov/data/fwedu_10BT/tokenized_EleutherAI_gpt-neox-20b/ctx_1024/valid
 vocab_size: 50280
 wandb_dir: ./logs/wandb
-wandb_project: scion_70m_final
+wandb_project: scion_70m_chinchilla
 wandb_run_name: muonmax_momo_lr_3e-5
 warmup_steps: 0
 weight_decay: 0.1

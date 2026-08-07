@@ -1,114 +1,76 @@
-"""α sweep plot for G-NGN-Scion across all three scales.
+"""α sweep for NGN-Scion and L-NGN-Scion across all three scales.
 
 Usage:
     python plotting/plot_alpha_sweep.py
 
-Writes paper/figures/alpha_sweep.{png,pdf}. One figure, three subplots
-(70M / 160M / 410M), gradient palette across α ∈ {1e-2, 3e-2, 5e-2, 7e-2, 1e-1}.
+Writes paper/figures/alpha_sweep.{png,pdf} (G-NGN, 1x3).
 """
-import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-import numpy as np
-import wandb
 
-from _style import apply_style, LW, S_LINE
+from _data import fetch_on_grid
+from _style import apply_style, alpha_colors, minor_grid, shared_legend, LW, S_LINE
 
 SCALES = [
-    ('70M',  ['steeldream/scion_70m_quarter_chinchilla'],  {}),
-    ('160M', ['steeldream/scion_160m_quarter_chinchilla'], {}),
-    ('410M', ['steeldream/scion_410m_quarter_chinchilla'], {}),
+    ('70M',  'steeldream/scion_70m_alpha_chinchilla'),
+    ('160M', 'steeldream/scion_160m_quarter_chinchilla'),
+    ('410M', 'steeldream/scion_410m_quarter_chinchilla'),
 ]
 
-# Shared ylim across all subplots so scales compare directly.
-YLIM = (2.7, 5.3)
+ALPHAS = [1e-2, 3e-2, 5e-2, 7e-2, 1e-1]
 
-# Sparse LR grid — one point per decade. Filter fetched data to just these,
-# so the 410M panel doesn't show extra 3e-N points from the old 11-LR runs.
+VARIANTS = {
+    'gngn': ('gngn_alpha_', 'NGN-Scion'),
+    'lngn': ('lngn_alpha_', 'L-NGN-Scion'),
+}
+
+# One point per decade — keeps the panel readable and matches the sweep grid.
 LR_GRID = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0]
 
-ALPHAS = [
-    (1e-2, 'gngn_alpha_1e-2'),
-    (3e-2, 'gngn_alpha_3e-2'),
-    (5e-2, 'gngn_alpha_5e-2'),
-    (7e-2, 'gngn_alpha_7e-2'),
-    (1e-1, 'gngn_alpha_1e-1'),
-]
+# L-NGN blows past the G-NGN range at high LR, so each row gets its own limits.
+YLIM = {'gngn': (2.7, 5.3), 'lngn': (2.7, 9.0)}
 
 
-def lr_from_name(name):
-    try:
-        return float(name.split('_lr_')[-1])
-    except Exception:
-        return None
+def alpha_slug(a):
+    """1e-2 -> '1e-2', 3e-2 -> '3e-2' (matches the exp_name in the configs)."""
+    s = f'{a:.0e}'
+    base, exp = s.split('e')
+    return f'{base}e{int(exp)}'
 
 
-def fetch(prefix, projects):
-    api = wandb.Api()
-    out = {}
-    for proj in projects:
-        for r in api.runs(proj, per_page=200):
-            n = r.name or ''
-            if not n.startswith(prefix + '_lr_') or r.state != 'finished':
+def draw_row(axes, prefix, row_label, colors, annotate_scale, ylim):
+    for ax, (scale, project) in zip(axes, SCALES):
+        for alpha, color in zip(ALPHAS, colors):
+            d = fetch_on_grid(f'{prefix}{alpha_slug(alpha)}_lr_', project, LR_GRID)
+            if not d:
                 continue
-            lr = lr_from_name(n)
-            if lr is None:
-                continue
-            v = r.summary.get('valid/loss')
-            if not isinstance(v, (int, float)) or not np.isfinite(v):
-                v = float('inf')
-            if lr not in out or v < out[lr]:
-                out[lr] = float(v)
-    return out
+            lrs = sorted(d)
+            vals = [d[lr] for lr in lrs]
+            ax.plot(lrs, vals, color=color, lw=LW, label=fr'$\alpha={alpha:g}$')
+            ax.scatter(lrs, vals, color=color, s=S_LINE, zorder=3)
+        ax.set_xscale('log')
+        ax.set_ylim(*ylim)
+        ax.set_xlabel('Learning rate')
+        minor_grid(ax)
+        if annotate_scale:
+            # Panel identity as in-axes text rather than a title.
+            ax.text(0.5, 0.94, scale, transform=ax.transAxes,
+                    ha='center', va='top', fontsize=12, color='#2A2A2A')
+    axes[0].set_ylabel(f'Validation loss\n{row_label}' if row_label else 'Validation loss')
 
 
 def main():
     apply_style()
-    cmap = mpl.colormaps['viridis']
-    colors = [cmap(i / (len(ALPHAS) - 1)) for i in range(len(ALPHAS))]
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True,
-                             sharey=True)
-
-    def closest_grid_lr(lr):
-        """Snap a fetched LR to the nearest LR_GRID point (log-space), or None
-        if it's not close enough (>10% off in log). Keeps 1e-3 but drops 3e-3."""
-        for g in LR_GRID:
-            if abs(math.log10(lr) - math.log10(g)) < 0.1:
-                return g
-        return None
-
-    for ax, (title, projects, prefix_overrides) in zip(axes, SCALES):
-        for (alpha, prefix), color in zip(ALPHAS, colors):
-            prefix = prefix_overrides.get(alpha, prefix)
-            d = fetch(prefix, projects)
-            if not d:
-                continue
-            # Keep only points that snap onto LR_GRID
-            keep = {}
-            for lr, v in d.items():
-                g = closest_grid_lr(lr)
-                if g is not None and (g not in keep or v < keep[g]):
-                    keep[g] = v
-            if not keep:
-                continue
-            lrs = sorted(keep.keys())
-            vals = [keep[lr] for lr in lrs]
-            label = fr'$\alpha={alpha:g}$'
-            ax.plot(lrs, vals, color=color, lw=LW, label=label)
-            ax.scatter(lrs, vals, color=color, s=S_LINE,
-                       edgecolor='white', linewidth=1.0)
-        ax.set_xscale('log')
-        ax.set_xlabel('Learning rate')
-        ax.set_ylim(*YLIM)
-        ax.set_title(title)
-
-    axes[0].set_ylabel('Validation loss')
-    axes[0].legend(loc='upper left', framealpha=0.95)
+    colors = alpha_colors(len(ALPHAS))
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4),
+                             constrained_layout=True, sharey=True)
+    draw_row(axes, VARIANTS['gngn'][0], '', colors, annotate_scale=True,
+             ylim=YLIM['gngn'])
+    legend_src = axes[0]
+    shared_legend(fig, legend_src)
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = os.path.join(repo_root, 'paper', 'figures')

@@ -3,6 +3,7 @@ beta2: 0.95
 cooldown_steps: 0.25
 d_model: 768
 deterministic: false
+divergence_threshold: 10.0
 dtype: bfloat16
 eval: true
 eval_every_steps: 200

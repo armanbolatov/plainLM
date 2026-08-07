@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 from dataclasses import dataclass
 
-from .components import RMSNorm, MLP, GLU, MLPReluSquared
+from .components import RMSNorm, MLP, GLU, GLUSplit, MLPReluSquared
 from .embeddings import precompute_freqs_cis, apply_rotary_emb_complex_like
 
 
@@ -23,7 +23,8 @@ class ModelConfig:
   tie_embeddings: bool = False
 
 
-MLP_CLASSES = {'mlp': MLP, 'glu': GLU, 'mlp_relu_sq': MLPReluSquared}
+MLP_CLASSES = {'mlp': MLP, 'glu': GLU, 'glu_split': GLUSplit,
+               'mlp_relu_sq': MLPReluSquared}
 
 
 class Attention(nn.Module):

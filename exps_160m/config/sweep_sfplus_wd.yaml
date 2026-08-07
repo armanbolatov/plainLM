@@ -1,0 +1,14 @@
+weight_decay: 20.0
+beta1: 0.9
+beta2: 0.95
+optim: sfplus
+# schedule-free: constant LR (no cooldown), the method averages internally
+cooldown_steps: 0.0
+exp_name: sfplus_wd
+wandb_run_name: sfplus_wd
+wandb_project: scion_160m
+divergence_threshold: 10.0
+out_dir: ./exps_160m/experiments
+lr:
+- 1.0
+warmup_steps: 1220

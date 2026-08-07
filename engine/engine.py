@@ -57,7 +57,7 @@ class TorchEngine(torch.nn.Module):
     # Whether optimizer needs loss value (e.g. Scion-NGN, NGN-MDv1, MaxMuon-Momo)
     self.pass_loss_to_optim = (
       bool(getattr(cfg, 'scion_ngn', False)) or
-      cfg.optim in ('ngnmdv1', 'muonmax_momo')
+      cfg.optim in ('ngnmdv1', 'muonmax_momo', 'sfplus')
     )
     self._accumulated_loss = 0.0
 
@@ -92,6 +92,10 @@ class TorchEngine(torch.nn.Module):
     self.optimizer = intialize_optimizer(param_groups, cfg, model=model)
     self.scheduler = initialize_scheduler(self.optimizer, cfg)
 
+    # No scheduler here reads the loss; only the adaptive optimizers do, via
+    # pass_loss_to_optim. Kept as a flag so the step() plumbing stays generic.
+    self.scheduler_needs_loss = False
+
     if cfg.resume:
       self.optimizer.load_state_dict(ckpt['optimizer'])
       self.scheduler.load_state_dict(ckpt['scheduler'])
@@ -124,7 +128,7 @@ class TorchEngine(torch.nn.Module):
       raise ValueError('Train loss is nan')
 
     # accumulate loss for adaptive optimizers (average over micro-batches)
-    if self.pass_loss_to_optim:
+    if self.pass_loss_to_optim or self.scheduler_needs_loss:
       self._accumulated_loss += loss_val.item()
 
     # backward pass, with gradient scaling if training in fp16
@@ -139,9 +143,11 @@ class TorchEngine(torch.nn.Module):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
       # step the optimizer, step the scaler if training in fp16
-      if self.pass_loss_to_optim:
+      avg_loss = None
+      if self.pass_loss_to_optim or self.scheduler_needs_loss:
         avg_loss = self._accumulated_loss / self.accumulation_steps
         self._accumulated_loss = 0.0
+      if self.pass_loss_to_optim:
         self.scaler.step(self.optimizer, loss=avg_loss)
       else:
         self.scaler.step(self.optimizer)
@@ -152,7 +158,10 @@ class TorchEngine(torch.nn.Module):
 
       # step the scheduler
       if self.scheduler:
-        self.scheduler.step()
+        if self.scheduler_needs_loss:
+          self.scheduler.step(loss=avg_loss)
+        else:
+          self.scheduler.step()
 
     return loss_val
 
@@ -165,6 +174,10 @@ class TorchEngine(torch.nn.Module):
     """Evaluate model on a dataloader."""
 
     self.model.eval()
+    # Schedule-free optimizers must be switched to their averaged iterate x
+    # for evaluation, then back to the training point y.
+    if hasattr(self.optimizer, 'eval'):
+      self.optimizer.eval()
 
     # Compute loss on dataloader
     total_loss = 0.0
@@ -195,5 +208,10 @@ class TorchEngine(torch.nn.Module):
 
     # calculate average loss
     avg_loss = total_loss / num_batches
+
+    # back to training mode (see the eval() switch at the top)
+    if hasattr(self.optimizer, 'train'):
+      self.optimizer.train()
+    self.model.train()
 
     return avg_loss

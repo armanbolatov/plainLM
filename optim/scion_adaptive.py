@@ -90,10 +90,14 @@ class Spectral(Norm):
         if g.dim() < 2:                              # fall back to Sign for 1-D tensors
             fan_in = max(g.numel() // g.shape[0], 1) if g.dim() >= 1 else 1
             return (1.0 / fan_in) * torch.sign(g)
-        out = zeropower_via_newtonschulz5(g.reshape(len(g), -1), steps=self.steps).view(g.shape)
+        # Tensors with more than two axes (e.g. a conv patch-embedding kernel,
+        # d_out x c x k x k) are treated as the d_out x (c*k*k) linear map they
+        # apply, so d_in must come from the flattened matrix, not from g.shape.
+        mat = g.reshape(len(g), -1)
+        out = zeropower_via_newtonschulz5(mat, steps=self.steps)
         d_out, d_in = out.shape
         scale = (d_out / d_in) ** 0.5 if self.normalized else d_out ** 0.5
-        return out * scale
+        return (out * scale).view(g.shape)
 
 
 class Sign(Norm):
@@ -126,8 +130,8 @@ _D_NORM_VALID = (None, 'd_out', 'sqrt_N', 'N')
 class Scion(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, momentum=1.0, norm='Spectral',
                  norm_kwargs=None, scale=1.0, unconstrained=False, weight_decay=0.0,
-                 polyak_multiplier=1.0, ngn=False, form='constrained', cap='hm',
-                 polyak_d_norm=None):
+                 polyak_multiplier=1.0, polyak_f_star=0.0, ngn=False, form='constrained', cap='hm',
+                 polyak_d_norm=None, global_unscaled=False):
         if lr < 0:
             raise ValueError(f'Invalid learning rate: {lr}')
         if momentum < 0:
@@ -147,10 +151,19 @@ class Scion(torch.optim.Optimizer):
                         scale=scale, unconstrained=unconstrained, weight_decay=weight_decay,
                         polyak_multiplier=polyak_multiplier)
         self.polyak_d_norm = polyak_d_norm
+        # Rustem form: global Polyak target uses the unscaled dual norm D_bare =
+        # sum_l d_l instead of D = sum_l s_l d_l. Rescaling D this way makes
+        # alpha = 1 the natural value, i.e. removes the per-group multiplier.
+        self.global_unscaled = global_unscaled
         self.ngn = ngn
         self.form = form
         self.cap = cap
         self.polyak_multiplier = polyak_multiplier
+        # Polyak uses the optimality GAP (f - f*). With f_star = 0 the raw loss
+        # stands in for the gap, which is right when the task is separable
+        # (f* ~ 0) but overstates it by several nats for LM pretraining, where
+        # alpha then has to absorb the discrepancy.
+        self.polyak_f_star = polyak_f_star
         self.diagnostics = {}
         super().__init__(params, defaults)
 
@@ -284,15 +297,17 @@ class Scion(torch.optim.Optimizer):
                     d_l_eff = d_l
 
                 # Polyak step. Linear (Demyanov–Rubinov) form, scale-consistent.
+                gap = max(loss - self.polyak_f_star, 1e-12)
                 if polyak_skip:
                     # Disable the cap for this group: behaves like plain Scion.
                     rho = float('inf')
                     reg_factor = d_l
                 elif self.ngn == 'global':
-                    rho = alpha_l * 2.0 * loss / max(D, 1e-12)
+                    D_polyak = D_bare if self.global_unscaled else D
+                    rho = alpha_l * 2.0 * gap / max(D_polyak, 1e-12)
                     reg_factor = D_bare           # bare dual norm sum (no s_l)
                 else:  # 'local'
-                    rho = alpha_l * 2.0 * loss / max(scale * d_l_eff, 1e-12)
+                    rho = alpha_l * 2.0 * gap / max(scale * d_l_eff, 1e-12)
                     reg_factor = d_l              # bare layer dual norm (no s_l)
 
                 # Effective LR via HM or min cap.

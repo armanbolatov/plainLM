@@ -28,7 +28,7 @@ Each `exps_{70m,160m,410m}/` has the same layout:
 ```
 config/          _base.yaml + one sweep_*.yaml per (method, α)
 experiments/     metrics.json per (config × lr) run
-*.png            lr_robustness, alpha_sweep, training_curves
+slurm_*.sh       sbatch array launchers (one task per LR)
 ```
 
 Launch a single run in a sweep:
@@ -41,17 +41,45 @@ python sweep_run.py --config exps_410m/config/sweep_gngn_alpha_7e-2.yaml --lr 3e
 
 ## Regenerate plots
 
-Three scripts, each takes `--scale`:
+Each script writes one multi-panel figure (70M / 160M / 410M side by side) to
+`paper/figures/` as both `.png` and `.pdf`:
 
 ```bash
-for scale in 70m 160m 410m; do
-  python plotting/plot_lr_robustness.py   --scale $scale
-  python plotting/plot_alpha_sweep.py     --scale $scale
-  python plotting/plot_training_curves.py --scale $scale
-done
+python plotting/plot_lr_robustness.py                  # lr_robustness
+python plotting/plot_lr_robustness.py --aligned        # lr_robustness_aligned
+python plotting/plot_alpha_sweep.py                    # alpha_sweep (G-NGN)
+python plotting/plot_training_curves.py                # training_curves
+python plotting/plot_proximal_stepsize.py              # proximal_stepsize
+python plotting/plot_qwen_ft.py                        # qwen_ft (SFT, local)
+python plotting/plot_qwen_curves.py                    # qwen_curves (SFT, local)
+python plotting/plot_qwen_alpha_sweep.py               # qwen_alpha_sweep (SFT, local)
 ```
 
-They pull `valid/loss` from wandb; only `state == 'finished'` runs are used.
+The first four pull `valid/loss` from wandb; only `state == 'finished'` runs
+are used. The `plot_qwen_*` scripts read local metrics from
+`qwen_ft/results_const/`. `plot_proximal_stepsize.py` is self-contained
+(numpy only) and reproduces the proximal-model figure; derivations are in
+[docs/proximal_derivations.md](docs/proximal_derivations.md).
+
+Shared styling lives in `plotting/_style.py`.
+
+## Qwen SFT benchmark
+
+`qwen_ft/finetune.py` fine-tunes Qwen2.5-{0.5B,1.5B,3B} on Alpaca with a
+constant LR (600 steps, bs 8), one (optimizer, lr) per invocation. Optimizers:
+`gngn`, `scion`, `adamw`, `muonmax`, `sfplus`, `ngnmdv1`, and more — see
+`--help`. G-NGN-Scion uses α=7e-2 with SFT-tuned LMO scales `8,1,8,1024`
+(found by `qwen_ft/optuna_scales.py`).
+
+```bash
+# full 8-point LR grid for one (optimizer, model):
+sbatch qwen_ft/slurm_ft_full.sh adamw 15b_adamw - - Qwen/Qwen2.5-1.5B
+# same but with explicit LMO scales (alpha-sweep series):
+sbatch qwen_ft/slurm_scales_full.sh gngn gngn_p2 7e-2 "8,1,8,1024" Qwen/Qwen2.5-0.5B
+```
+
+Results land in `qwen_ft/results_const/<tag>/lr_<lr>/metrics.json`, which the
+three `plot_qwen_*.py` scripts consume directly.
 
 ## Structure
 
@@ -63,9 +91,12 @@ plainLM/
 ├── engine/        train/eval step
 ├── models/        transformer
 ├── optim/         SCION + baselines
-├── plotting/      per-scale plot scripts
-├── exps_*/        per-scale configs, metrics, PNGs
-├── archive/       old bayes sweeps
+├── plotting/      figure scripts + shared style
+├── docs/          proximal-model derivations
+├── exps_*/        per-scale configs, metrics, launchers
+├── qwen_ft/       Qwen SFT benchmark (trainer, launchers, results)
+├── paper/         LaTeX source + generated figures
+├── archive/       retired one-off drivers, superseded launchers, old sweeps
 ├── train.py       main training script
 └── sweep_run.py   single-run launcher
 ```

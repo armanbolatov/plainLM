@@ -25,7 +25,7 @@ n_heads: 16
 n_layers: 24
 num_workers: 4
 optim: muonmax_momo
-out_dir: ./exps_410m/experiments_full
+out_dir: ./exps_410m/experiments
 over_write: true
 print_progress: true
 resume: false
@@ -34,9 +34,9 @@ resume_step: null
 rms_norm: true
 sampler: sequential
 sampler_seed: null
-save_every_steps: 2940
-save_intermediate_checkpoints: true
-save_last_checkpoint: false
+save_every_steps: null
+save_intermediate_checkpoints: false
+save_last_checkpoint: true
 scheduler: wsd
 seed: 100
 seq_len: 1024

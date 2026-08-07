@@ -149,7 +149,27 @@ def intialize_optimizer(param_groups, cfg, model=None):
       form=getattr(cfg, 'scion_form', 'constrained'),
       cap=getattr(cfg, 'scion_cap', 'hm'),
       polyak_d_norm=getattr(cfg, 'polyak_d_norm', None),
+      global_unscaled=getattr(cfg, 'scion_global_unscaled', False),
     )
+
+  elif cfg.optim == 'sfplus':
+    # ScheduleFree+ (Defazio 2026), official reference implementation.
+    # Adapter maps the engine's step(loss=...) onto SF+'s step_func API.
+    from .adamc_schedulefree_plus_paper import AdamCScheduleFreePlusPaper
+
+    class SFPlus(AdamCScheduleFreePlusPaper):
+      def step(self, closure=None, loss=None):
+        return self.step_func(function_value=loss)
+
+    optimizer = SFPlus(
+      [p for p in model.parameters() if p.requires_grad] if model is not None
+      else param_groups,
+      lr=cfg.lr,
+      betas=[cfg.beta1, cfg.beta2],
+      weight_decay=cfg.weight_decay,
+      polyak_beta=getattr(cfg, 'sfplus_polyak_beta', 0.0),
+    )
+    optimizer.train()   # schedule-free optimizers start in train mode
 
   elif cfg.optim == 'muonmax_momo':
     from .muonmax_momo import MuonMaxMomo

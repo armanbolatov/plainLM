@@ -45,3 +45,4 @@ vocab_size: 50280
 wandb_dir: ./logs/wandb
 wandb_project: scion_160m
 warmup_steps: 0
+divergence_threshold: 10.0

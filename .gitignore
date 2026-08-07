@@ -37,6 +37,13 @@ wandb/
 # Build artifacts
 build/
 
-# Local paper drafts, archived experiments
-paper
-archive
+# Slurm job output
+slurm_logs/
+
+# Local paper drafts (the Overleaf mirror), archived experiments
+paper/
+archive/
+
+# Vision benchmark: separate track from the paper, and the checkpoints are large
+exps_vit/
+plotting/plot_vit.py
